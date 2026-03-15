@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Output
+output/
+*.csv
+*.tsv
+!tests/expected_*.csv
+
+# Rust (future)
+target/
+
+# Data files (large)
+data/
+*.abf
+*.fast5
+*.pod5
+*.dat
+*.bin
+!tests/fixtures/
