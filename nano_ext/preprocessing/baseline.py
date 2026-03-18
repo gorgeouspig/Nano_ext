@@ -157,8 +157,11 @@ def _estimate_trend(
         step = max(1, n_samples // 10000)
         t_sub = t[::step]
         s_sub = signal[::step]
-        coeffs = np.polyfit(t_sub, s_sub, deg=1)
-        return np.polyval(coeffs, t)
+        if len(t_sub) > 0: # Check to ensure data exists for polyfit
+            coeffs = np.polyfit(t_sub, s_sub, deg=1)
+            return np.asarray(np.polyval(coeffs, t))
+        else:
+            return np.zeros(n_samples, dtype=np.float64) # Fallback
 
     elif method == "polynomial":
         # Polynomial fit with iterative outlier rejection
@@ -166,27 +169,48 @@ def _estimate_trend(
         t_sub = t[::step]
         s_sub = signal[::step]
 
-        # First pass: fit all data
-        mask = np.ones(len(s_sub), dtype=bool)
+        coeffs: np.ndarray
+        if len(t_sub) > order:
+            coeffs = np.polyfit(t_sub, s_sub, deg=order)
+        else:
+            coeffs = np.array([np.mean(s_sub)]) if len(s_sub) > 0 else np.array([0.0]) # Fallback for insufficient data
+
+        mask = np.ones(len(s_sub), dtype=bool) # Initialize mask here!
+
         for _ in range(3):  # 3 iterations of outlier rejection
-            coeffs = np.polyfit(t_sub[mask], s_sub[mask], deg=order)
             fitted = np.polyval(coeffs, t_sub)
             residuals = s_sub - fitted
-            std = np.std(residuals[mask]) if mask.sum() > order + 1 else np.std(residuals)
-            # Exclude points > 3 sigma from fit (likely events)
-            mask = np.abs(residuals) < 3.0 * std
+            
+            std_residuals: float
+            if mask.sum() > order + 1 and len(residuals[mask]) > 0:
+                std_residuals = np.std(residuals[mask])
+            elif len(residuals) > 0:
+                std_residuals = np.std(residuals)
+            else:
+                std_residuals = 1.0 # Default if no data
 
-        return np.polyval(coeffs, t)
+            mask = np.abs(residuals) < 3.0 * std_residuals
+            if mask.sum() > order + 1 and len(t_sub[mask]) > order:
+                coeffs = np.polyfit(t_sub[mask], s_sub[mask], deg=order)
+
+        return np.asarray(np.polyval(coeffs, t))
 
     elif method == "spline":
         step = max(1, n_samples // 5000)
         t_sub = t[::step]
         s_sub = signal[::step]
 
-        # High smoothing factor for trend estimation
-        smoothing = len(s_sub) * (np.std(signal) * 0.5) ** 2
-        spline = UnivariateSpline(t_sub, s_sub, s=smoothing)
-        return spline(t)
+        # Handle cases where s_sub might be empty or too short for spline
+        if len(s_sub) > 1: # UnivariateSpline requires at least 2 data points
+            # Ensure smoothing is a float
+            std_signal: float = float(np.std(signal)) if len(signal) > 1 else 0.5
+            len_s_sub_float: float = float(len(s_sub))
+            smoothing_factor_float: float = (std_signal * 0.5) ** 2
+            smoothing: float = len_s_sub_float * smoothing_factor_float
+            spline = UnivariateSpline(t_sub, s_sub, s=smoothing)
+            return np.asarray(spline(t))
+        else:
+            return np.zeros(n_samples, dtype=np.float64) # Fallback
 
     else:
         raise ValueError(
