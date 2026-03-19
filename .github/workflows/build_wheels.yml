@@ -3,7 +3,7 @@ name: Build Wheels
 on:
   push:
     branches: [ main ]
-    tags: [ 'v*' ]
+    tags: [ 'v*' ]  # Pushes to main branch and tags starting with v (e.g., v1.0.0)
 
 jobs:
   build:
@@ -12,17 +12,24 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
+          override: true
+
+      - name: Verify Rust installation
+        run: |
+          rustc --version
+          cargo --version
 
       - name: Install maturin
         run: pip install maturin
@@ -34,7 +41,7 @@ jobs:
         run: maturin build --release
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: wheel-${{ matrix.os }}
           path: target/wheelhouse/*.whl
@@ -46,10 +53,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Download all wheels
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           path: ./wheels
 
