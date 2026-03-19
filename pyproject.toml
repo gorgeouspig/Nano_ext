@@ -33,7 +33,8 @@ dev = [
 nano-ext = "nano_ext.cli:main"
 
 [tool.maturin]
-manifest-path = "nano_ext/rust/Cargo.toml"
+manifest-path = "Cargo.toml"
+python-source = "src"
 bindings = "pyo3"
 strip = false
 
