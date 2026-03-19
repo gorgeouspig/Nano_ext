@@ -1,8 +1,22 @@
 """BIC-based threshold determination using Gaussian Mixture Models.
 
-Fits GMMs with varying numbers of components to the current distribution,
-selects the optimal model by BIC, and computes decision boundaries
-between components as objective thresholds.
+This module implements an objective method for determining nanopore event
+detection thresholds using Gaussian Mixture Models (GMM) and the Bayesian
+Information Criterion (BIC). The approach fits multiple GMMs with varying
+numbers of components to the baseline-corrected current distribution and
+selects the optimal model by minimizing the information criterion (BIC or AIC).
+
+The detection threshold is computed as the decision boundary between the
+identified baseline component and the nearest event-related component in the
+GMM. This provides an objective, data-driven approach to threshold selection
+that adapts to the specific noise and signal characteristics of each dataset.
+
+Key features:
+- Automatic selection of optimal number of GMM components via BIC/AIC
+- Robust baseline component identification based on proximity to zero in residual space
+- Computation of decision boundaries between Gaussian components
+- Support for both BIC (preferred) and AIC criteria
+- Efficient handling of large signals through intelligent subsampling
 """
 
 from __future__ import annotations

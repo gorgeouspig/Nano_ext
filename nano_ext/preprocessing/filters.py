@@ -1,8 +1,13 @@
 """Low-pass filtering for nanopore current signals.
 
-Provides Bessel and Butterworth low-pass filters suitable for
-nanopore data. Bessel filters are preferred for their minimal
-phase distortion, preserving event transition shapes.
+This module provides implementations of Bessel and Butterworth low-pass filters
+specifically designed for nanopore current signal processing. The filters use
+zero-phase (forward-backward) filtering to avoid phase distortion, which is
+critical for preserving the true shape of nanopore events.
+
+Bessel filters are recommended for nanopore data due to their maximally flat
+group delay, which minimizes distortion of event transition shapes. Butterworth
+filters provide a sharper rolloff but introduce more phase distortion.
 """
 
 from __future__ import annotations

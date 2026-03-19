@@ -1,6 +1,12 @@
 """Data models for nanopore event detection.
 
-Core data classes representing events, sub-levels, and signal metadata.
+This module defines the core data structures used throughout the nanopore event
+detection pipeline. These include classes for representing detected events,
+their sub-levels, signal data, thresholding results, baseline estimates, and
+detection configuration.
+
+The models use Python dataclasses for clean, efficient data storage with
+automatic generation of __init__, __repr__, and other special methods.
 """
 
 from __future__ import annotations
@@ -13,7 +19,17 @@ import numpy as np
 
 
 class EventDirection(str, Enum):
-    """Direction of current change to detect as events."""
+    """Direction of current change to detect as events.
+    
+    Attributes
+    ----------
+    DOWN : str
+        Current decrease (blockade event)
+    UP : str
+        Current increase (anti-blockade or spike event)
+    BOTH : str
+        Both directions (detect blockades and spikes)
+    """
 
     DOWN = "down"  # Current decrease (blockade)
     UP = "up"  # Current increase
@@ -21,7 +37,17 @@ class EventDirection(str, Enum):
 
 
 class EventType(str, Enum):
-    """Classification of detected events."""
+    """Classification of detected events based on their temporal structure.
+    
+    Attributes
+    ----------
+    SINGLE : str
+        Single-level blockade with constant current level
+    MULTI_LEVEL : str
+        Multi-level (stepwise) event with distinct current levels
+    SPIKE : str
+        Very short transient spike (typically < 1ms duration)
+    """
 
     SINGLE = "single"  # Single-level blockade
     MULTI_LEVEL = "multi_level"  # Multi-level (stepwise) event
@@ -30,12 +56,16 @@ class EventType(str, Enum):
 
 @dataclass
 class SubLevel:
-    """A single sub-level within a multi-level event.
+    """A single sub-level within a multi-level nanopore event.
+    
+    Represents a segment of constant current level within a stepwise event.
+    Multi-level events are composed of two or more sub-levels with different
+    current amplitudes.
 
     Attributes
     ----------
     start_idx : int
-        Start index in the signal array.
+        Start index in the signal array (inclusive).
     end_idx : int
         End index in the signal array (exclusive).
     start_time : float
@@ -43,13 +73,15 @@ class SubLevel:
     end_time : float
         End time in seconds.
     duration : float
-        Duration in seconds.
+        Duration in seconds (end_time - start_time).
     mean_current : float
-        Mean current value during this sub-level.
+        Mean current value during this sub-level (in raw units, e.g., pA).
     std_current : float
         Standard deviation of current during this sub-level.
     level_index : int
-        Level number (0 = deepest blockade, ascending).
+        Level number indicating the hierarchical depth (0 = deepest blockade,
+        with increasing values representing shallower levels or returns toward
+        baseline).
     """
 
     start_idx: int
@@ -64,12 +96,18 @@ class SubLevel:
 
 @dataclass
 class Event:
-    """A detected nanopore event (blockade).
+    """A detected nanopore event representing a significant deviation from baseline current.
+    
+    In nanopore sensing, events typically correspond to transient blockades where
+    molecules passing through the nanopore obstruct ionic flow, causing a drop in
+    current. Events can be simple blockades (single-level) or complex stepwise
+    transitions (multi-level) as molecules interact with the nanopore in different
+    conformations or orientations.
 
     Attributes
     ----------
     start_idx : int
-        Start index in the signal array.
+        Start index in the signal array (inclusive).
     end_idx : int
         End index in the signal array (exclusive).
     start_time : float
@@ -77,25 +115,25 @@ class Event:
     end_time : float
         End time in seconds.
     duration : float
-        Duration in seconds.
+        Duration in seconds (end_time - start_time).
     mean_current : float
-        Mean current during the event (baseline-corrected residual).
+        Mean current during the event (baseline-corrected residual, in raw units).
     std_current : float
         Standard deviation of current during the event.
     baseline_current : float
-        Local baseline current at the event location.
+        Local baseline current at the event location (in raw units, e.g., pA).
     depth : float
-        Blockade depth (absolute value of current change from baseline).
+        Blockade depth (absolute value of current change from baseline, positive value).
     relative_depth : float
-        Relative blockade depth (depth / baseline_current).
+        Relative blockade depth (depth / baseline_current, dimensionless).
     area : float
-        Event area (integral of current deviation from baseline).
+        Event area (integral of current deviation from baseline, in units*seconds).
     n_levels : int
-        Number of sub-levels detected within this event.
+        Number of sub-levels detected within this event (1 for single-level events).
     sublevels : list[SubLevel]
         List of sub-levels (empty for single-level events).
     event_type : EventType
-        Classification of the event.
+        Classification of the event (SINGLE, MULTI_LEVEL, or SPIKE).
     """
 
     start_idx: int

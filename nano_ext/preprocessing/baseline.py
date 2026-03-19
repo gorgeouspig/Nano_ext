@@ -8,6 +8,7 @@ Provides a multi-stage baseline estimation pipeline:
 
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 import numpy as np
@@ -15,6 +16,9 @@ from scipy.interpolate import UnivariateSpline
 from scipy.ndimage import uniform_filter1d
 
 from nano_ext.models import BaselineResult
+import nano_ext_core
+
+logger = logging.getLogger(__name__)
 
 
 def estimate_baseline(
@@ -229,6 +233,7 @@ def _local_baseline_masked(
 
     Uses a sliding window approach where only non-event samples
     contribute to the baseline estimate.
+    This function uses a Rust implementation for improved performance.
 
     Parameters
     ----------
@@ -246,6 +251,28 @@ def _local_baseline_masked(
     np.ndarray
         Estimated local baseline.
     """
+    # Use Rust implementation for performance
+    try:
+        # Convert to lists for Rust function (could be optimized to avoid copying)
+        signal_list = signal.tolist()
+        mask_list = mask.tolist()
+        result_list = nano_ext_core.local_baseline_percentile(
+            signal_list, mask_list, window_samples, percentile
+        )
+        return np.array(result_list, dtype=np.float64)
+    except Exception as e:
+        # Fallback to Python implementation if Rust fails
+        logger.warning(f"Rust baseline estimation failed, falling back to Python: {e}")
+        return _local_baseline_masked_python(signal, mask, window_samples, percentile)
+
+
+def _local_baseline_masked_python(
+    signal: np.ndarray,
+    mask: np.ndarray,
+    window_samples: int,
+    percentile: float,
+) -> np.ndarray:
+    """Original Python implementation of local baseline estimation."""
     n_samples = len(signal)
     half_win = window_samples // 2
     baseline = np.zeros(n_samples, dtype=np.float64)
