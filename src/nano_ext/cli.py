@@ -57,6 +57,16 @@ def main(verbose):
     help="Data type for binary files (e.g., 'int16', 'float32').",
 )
 @click.option(
+    "--no-filter",
+    is_flag=True,
+    help="Skip low-pass filtering.",
+)
+@click.option(
+    "--pre-filter-cutoff",
+    type=float,
+    help="Cutoff frequency of pre-applied low-pass filter (used if --no-filter is set).",
+)
+@click.option(
     "--no-sublevel-analysis",
     is_flag=True,
     help="Disable sub-level (multi-step) event analysis.",
@@ -145,6 +155,8 @@ def analyze(
     channel,
     sampling_rate,
     dtype,
+    no_filter,
+    pre_filter_cutoff,
     no_sublevel_analysis,
     detrend_method,
     detrend_order,
@@ -166,6 +178,8 @@ def analyze(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     config = DetectionConfig(
+        apply_filter=not no_filter,
+        pre_applied_filter_cutoff=pre_filter_cutoff,
         detrend_method=detrend_method,
         detrend_order=detrend_order,
         baseline_window_sec=baseline_window_sec,

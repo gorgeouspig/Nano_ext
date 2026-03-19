@@ -134,16 +134,23 @@ def run_pipeline(
         logger.info("Filtering signal...")
     from nano_ext.preprocessing.filters import lowpass_filter
 
-    cutoff = config.filter_cutoff if config.filter_cutoff else sr / 10.0
-    filtered = lowpass_filter(
-        signal,
-        sampling_rate=sr,
-        cutoff=cutoff,
-        filter_type=config.filter_type,
-        order=config.filter_order,
-    )
-    if verbose:
-        logger.info(f"  Filter: {config.filter_type} order={config.filter_order} cutoff={cutoff:.0f} Hz")
+    cutoff = None
+    if config.apply_filter:
+        cutoff = config.filter_cutoff if config.filter_cutoff else sr / 10.0
+        filtered = lowpass_filter(
+            signal,
+            sampling_rate=sr,
+            cutoff=cutoff,
+            filter_type=config.filter_type,
+            order=config.filter_order,
+        )
+        if verbose:
+            logger.info(f"  Filter: {config.filter_type} order={config.filter_order} cutoff={cutoff:.0f} Hz")
+    else:
+        filtered = signal
+        cutoff = config.pre_applied_filter_cutoff  # Use user-provided cutoff for detection params
+        if verbose:
+            logger.info(f"  Low-pass filtering skipped. Using pre-applied cutoff: {cutoff} Hz")
 
     # ---- Step 2: Baseline estimation ----
     if verbose:

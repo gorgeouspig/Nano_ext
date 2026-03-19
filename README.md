@@ -13,6 +13,7 @@ A Python-based toolkit (with Rust extensions) designed to extract events (blocka
 
 ## Installation
 
+### From Source (Development Mode)
 ```bash
 # Clone the repository
 git clone https://github.com/yourusername/nano_ext.git
@@ -26,20 +27,78 @@ source venv/bin/activate
 pip install -e .
 ```
 
+### Installing via Pre-built Wheels
+We provide pre-built wheels for supported platforms in our GitHub Releases. It is recommended to install these within a virtual environment.
+
+```bash
+# Create and activate a virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# Install the wheel file downloaded from the latest release
+pip install nano_ext-0.1.0-cp310-cp310-linux_x86_64.whl
+```
+
 ## Usage
 
 ### Command Line Interface
 
-```bash
-# Basic usage
-nano-ext input.abf -o output_directory
+The `nano-ext` CLI is designed for batch processing of nanopore data files.
 
-# With advanced options
-nano-ext input.abf -o output_directory \
-    --detrend-method polynomial \
-    --baseline-window-sec 5.0 \
-    --gmm-max-components 10 \
+#### Basic Usage
+The primary positional argument is the input file path. Use the `-o` or `--output-dir` option to specify the directory where results will be saved.
+
+```bash
+# Process input file (abf or binary) and save output files to ./analysis_results
+nano-ext path/to/input.abf -o ./analysis_results
+```
+
+The tool will generate:
+1. `[input_filename]_events.csv`: A summary of detected events.
+2. `[input_filename]_analysis.png`: (If `--plot` is used) A visualization plot.
+
+#### Handling Pre-Filtered Data
+If your data is already low-pass filtered, you can disable the built-in filtering to avoid phase distortion and provide the known cutoff frequency to ensure accurate event detection parameters.
+
+```bash
+# Disable built-in filtering and specify the pre-applied cutoff frequency (e.g., 10 kHz)
+nano-ext path/to/input.abf -o ./analysis_results --no-filter --pre-filter-cutoff 10000
+```
+
+#### Visualizing Results
+To visualize the analysis, add the `--plot` flag. This generates an `[input_filename]_analysis.png` file in your output directory, which includes:
+
+- **Raw Signal** (gray)
+- **Filtered Signal** (blue)
+- **Local Baseline** (red)
+- **Detected Events** (orange highlights)
+
+```bash
+nano-ext path/to/input.abf -o ./analysis_results --plot
+```
+
+#### Handling Pre-Filtered Data
+If your data is already low-pass filtered, you can disable the built-in filtering to avoid phase distortion and inform the pipeline of the previous filter's cutoff frequency for accurate event parameter calculation.
+
+```bash
+# Process pre-filtered data (e.g., filtered at 10 kHz)
+nano-ext input.abf -o ./analysis_results --no-filter --pre-filter-cutoff 10000
+```
+
+#### Advanced Analysis Options
+```bash
+nano-ext input.abf -o ./analysis_results \
+    --detrend-method polynomial --detrend-order 3 \
+    --baseline-window-sec 5.0 --baseline-iterations 3 \
+    --event-direction down \
+    --min-event-duration-sec 0.0001 \
+    --gmm-max-components 10 --bic-criterion bic \
     --plot
+```
+
+*For a full list of available options, run:*
+```bash
+nano-ext --help
 ```
 
 ### Python API
@@ -48,7 +107,7 @@ nano-ext input.abf -o output_directory \
 from nano_ext import SignalData, run_pipeline
 from nano_ext.models import DetectionConfig
 
-# Load your signal data (example with synthetic data)
+# Load your signal data
 signal_data = SignalData(
     signal=your_current_signal_array,
     sampling_rate=100000.0,  # Hz
@@ -57,8 +116,9 @@ signal_data = SignalData(
 
 # Configure detection parameters
 config = DetectionConfig(
+    apply_filter=True,
+    filter_type="bessel",
     detrend_method="polynomial",
-    baseline_window_sec=5.0,
     gmm_max_components=10,
 )
 
@@ -73,13 +133,6 @@ result = run_pipeline(
 # Access results
 print(f"Detected {result.n_events} events")
 print(result.summary())
-
-# Save results
-from nano_ext.output.csv_writer import write_events_to_csv
-from nano_ext.output.visualize import plot_pipeline_result
-
-write_events_to_csv(result.events, "events.csv", result.signal_data.sampling_rate)
-plot_pipeline_result(result, "analysis.png")
 ```
 
 ## Algorithm Overview
@@ -106,21 +159,15 @@ plot_pipeline_result(result, "analysis.png")
 - BIC-based decision to accept/reject change points
 - Recursive decomposition until no further improvement
 
-## Output
+## Visualization
 
-The pipeline produces:
-- CSV file with event statistics (start/end times, duration, depth, area, etc.)
-- Optional visualization plot showing:
-  - Raw and filtered signals
-  - Estimated baseline
-  - Baseline-corrected signal with threshold
-  - Detected events colored by depth
+The `nano_ext.output.visualize` module provides functionality to generate comprehensive plots of the analysis results. When using the CLI with the `--plot` flag, an `[input_filename]_analysis.png` file is automatically saved in the output directory.
 
-## Performance Optimization
-
-Computationally intensive components have been accelerated with Rust:
-- PELT change-point detection algorithm
-- Local baseline estimation using sliding window percentile filtering
+The generated plot visualizes:
+- **Raw Signal**: The original input data (in gray).
+- **Filtered Signal**: The signal after low-pass filtering (in blue).
+- **Local Baseline**: The estimated baseline trend (in red).
+- **Detected Events**: Highlighted regions (in orange) showing the detected events, allowing for easy verification of the pipeline's detection accuracy.
 
 ## Testing
 
@@ -130,17 +177,6 @@ pip install -e .[dev]
 pytest
 ```
 
-## References
-
-The implementation follows principles from:
-- Chung et al. (2011) for nanopore signal analysis
-- Killick et al. (2012) for the PELT algorithm
-- Schwarz (1978) for Bayesian Information Criterion
-
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgments
-
-Developed as part of nanopore sensing research aimed at providing objective, automated analysis tools for single-molecule biophysics.

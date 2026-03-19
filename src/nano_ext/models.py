@@ -262,6 +262,8 @@ class DetectionConfig:
     """
 
     # --- Filtering ---
+    apply_filter: bool = True
+    pre_applied_filter_cutoff: Optional[float] = None  # Hz; Used if apply_filter is False
     filter_type: str = "bessel"  # "bessel" or "butterworth"
     filter_order: int = 4
     filter_cutoff: Optional[float] = None  # Hz; None = auto (fs / 10)
