@@ -29,7 +29,7 @@ Thumbs.db
 .ipynb_checkpoints/
 
 # Output
-!src/nano_ext/output/
+!src/nano_ext.outputs/
 output/
 *.csv
 *.tsv

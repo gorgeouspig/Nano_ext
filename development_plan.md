@@ -33,8 +33,8 @@ The project has a functional Python skeleton with several components completed:
 - [x] **Sub-level Analysis**: `sublevel.py` and `changepoint.py` (recursive segmentation).
 - [x] **Pipeline**: `pipeline.py` for end-to-end orchestration.
 - [x] **CLI**: Implemented in `nano_ext/cli.py` with full configuration options.
-- [x] **Visualization**: Implemented in `nano_ext/output/visualize.py` for comprehensive result plotting.
-- [x] **Export**: Implemented in `nano_ext/output/csv_writer.py` for CSV/TSV output.
+- [x] **Visualization**: Implemented in `nano_ext.outputs/visualize.py` for comprehensive result plotting.
+- [x] **Export**: Implemented in `nano_ext.outputs/csv_writer.py` for CSV/TSV output.
 - [ ] **Rust Extension**: `Cargo.toml` and Rust source code are not yet created.
 - [ ] **Testing**: Synthetic data generation exists (`testing/synthetic.py`), but formal unit tests are missing.
 
@@ -42,8 +42,8 @@ The project has a functional Python skeleton with several components completed:
 
 ### Phase 1: Python MVP & CLI (Completed)
 ✅ **CLI Implementation**: Created `nano_ext/cli.py` to allow users to run the pipeline on ABF/binary files from the command line.
-✅ **Visualization Module**: Created `nano_ext/output/visualize.py` using `matplotlib` to plot raw/filtered signals, baseline, thresholds, and detected events.
-✅ **Export Module**: Created `nano_ext/output/csv_writer.py` to save event statistics to CSV/TSV.
+✅ **Visualization Module**: Created `nano_ext.outputs/visualize.py` using `matplotlib` to plot raw/filtered signals, baseline, thresholds, and detected events.
+✅ **Export Module**: Created `nano_ext.outputs/csv_writer.py` to save event statistics to CSV/TSV.
 ✅ **Baseline Drift Refinement**: Enhanced the iterative baseline estimator in `nano_ext/preprocessing/baseline.py` to robustly handle upward-drifting baselines as requested.
 
 ### Phase 2: Python Testing & Documentation (Short-term)

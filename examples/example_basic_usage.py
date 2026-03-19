@@ -19,8 +19,8 @@ import matplotlib.pyplot as plt
 
 from nano_ext import SignalData, run_pipeline
 from nano_ext.models import DetectionConfig
-from nano_ext.output.csv_writer import write_events_to_csv
-from nano_ext.output.visualize import plot_pipeline_result
+from nano_ext.outputs.csv_writer import write_events_to_csv
+from nano_ext.outputs.visualize import plot_pipeline_result
 
 
 def main():

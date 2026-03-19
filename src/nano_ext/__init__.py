@@ -15,8 +15,8 @@ from .models import (
 )
 
 from .pipeline import run_pipeline, process_file, PipelineResult
-from .output.csv_writer import write_events_to_csv
-from .output.visualize import plot_pipeline_result
+from .outputs.csv_writer import write_events_to_csv
+from .outputs.visualize import plot_pipeline_result
 
 from ._nano_ext import *
 

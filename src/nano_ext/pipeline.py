@@ -148,9 +148,9 @@ def run_pipeline(
             logger.info(f"  Filter: {config.filter_type} order={config.filter_order} cutoff={cutoff:.0f} Hz")
     else:
         filtered = signal
-        cutoff = config.pre_applied_filter_cutoff  # Use user-provided cutoff for detection params
+        cutoff = config.pre_applied_filter_cutoff if config.pre_applied_filter_cutoff else sr / 10.0
         if verbose:
-            logger.info(f"  Low-pass filtering skipped. Using pre-applied cutoff: {cutoff} Hz")
+            logger.info(f"  Low-pass filtering skipped. Using pre-applied cutoff: {cutoff:.0f} Hz")
 
     # ---- Step 2: Baseline estimation ----
     if verbose:

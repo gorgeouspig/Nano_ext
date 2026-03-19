@@ -161,7 +161,7 @@ print(result.summary())
 
 ## Visualization
 
-The `nano_ext.output.visualize` module provides functionality to generate comprehensive plots of the analysis results. When using the CLI with the `--plot` flag, an `[input_filename]_analysis.png` file is automatically saved in the output directory.
+The `nano_ext.outputs.visualize` module provides functionality to generate comprehensive plots of the analysis results. When using the CLI with the `--plot` flag, an `[input_filename]_analysis.png` file is automatically saved in the output directory.
 
 The generated plot visualizes:
 - **Raw Signal**: The original input data (in gray).

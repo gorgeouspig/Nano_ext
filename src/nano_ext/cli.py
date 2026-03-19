@@ -6,8 +6,8 @@ import numpy as np
 
 from nano_ext.models import DetectionConfig, EventDirection
 from nano_ext.pipeline import process_file
-from nano_ext.output.csv_writer import write_events_to_csv
-from nano_ext.output.visualize import plot_pipeline_result
+from nano_ext.outputs.csv_writer import write_events_to_csv
+from nano_ext.outputs.visualize import plot_pipeline_result
 
 logger = logging.getLogger(__name__)
 
