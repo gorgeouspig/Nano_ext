@@ -40,6 +40,7 @@ bindings = "pyo3"
 strip = false
 
 [tool.setuptools.packages.find]
+where = ["src"]
 include = ["nano_ext*"]
 
 [tool.pytest.ini_options]
