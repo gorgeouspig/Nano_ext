@@ -44,7 +44,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wheel-${{ matrix.os }}
-          path: target/wheelhouse/*.whl
+          path: target/wheels/*.whl
 
   release:
     if: github.ref_type == 'tag'
