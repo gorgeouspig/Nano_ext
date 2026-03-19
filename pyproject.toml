@@ -34,7 +34,7 @@ nano-ext = "nano_ext.cli:main"
 
 [tool.maturin]
 manifest-path = "Cargo.toml"
-python-source = "src"
+# python-source = "src"  # Removed, relying on default behavior or explicit inclusion
 bindings = "pyo3"
 strip = false
 
