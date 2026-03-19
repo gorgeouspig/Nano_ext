@@ -2,7 +2,7 @@ use pyo3::prelude::*;
 
 /// A Python module implemented in Rust.
 #[pymodule]
-fn nano_ext_core(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _nano_ext(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(pelt, m)?)?;
     m.add_function(wrap_pyfunction!(local_baseline_percentile, m)?)?;
     Ok(())
