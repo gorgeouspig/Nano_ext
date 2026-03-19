@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-import nano_ext_core
+import nano_ext._nano_ext as nano_ext_core
 
 
 def test_pelt_no_change():

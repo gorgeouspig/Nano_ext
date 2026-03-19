@@ -16,7 +16,7 @@ from scipy.interpolate import UnivariateSpline
 from scipy.ndimage import uniform_filter1d
 
 from nano_ext.models import BaselineResult
-import nano_ext_core
+import nano_ext._nano_ext as nano_ext_core
 
 logger = logging.getLogger(__name__)
 

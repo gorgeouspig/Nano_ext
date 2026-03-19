@@ -11,7 +11,7 @@ This is used to identify level transitions within multi-level
 from __future__ import annotations
 
 import numpy as np
-from nano_ext import nano_ext_core
+from nano_ext._nano_ext import nano_ext_core
 
 
 def binary_segmentation_bic(
