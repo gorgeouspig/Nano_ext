@@ -11,39 +11,17 @@ This is used to identify level transitions within multi-level
 from __future__ import annotations
 
 import numpy as np
-from nano_ext._nano_ext import nano_ext_core
-
+from nano_ext import pelt
 
 def binary_segmentation_bic(
     signal: np.ndarray,
     min_segment_samples: int = 50,
     penalty_factor: float = 1.5,
 ) -> list[int]:
-    """Detect change points using the PELT algorithm with a Gaussian cost function.
-
-    The algorithm minimizes the sum of segment costs (negative log-likelihood)
-    plus a penalty for each change point. The penalty is controlled by the
-    penalty_factor parameter.
-
-    Parameters
-    ----------
-    signal : np.ndarray
-        1-D signal segment to analyze (e.g., current within one event).
-    min_segment_samples : int
-        Minimum number of samples in each segment. Prevents over-segmentation
-        on short/noisy data.
-    penalty_factor : float
-        Multiplier for the penalty term. Values > 1 increase the penalty
-        (fewer change points); values < 1 decrease the penalty (more change points).
-
-    Returns
-    -------
-    list[int]
-        Sorted list of change point indices (relative to the input signal).
-        Empty if no change points are found.
-    """
+    # ... (omitted) ...
     # Call the Rust PELT implementation
-    change_points = nano_ext_core.pelt(signal.tolist(), penalty_factor, min_segment_samples)
+    change_points = pelt(signal.tolist(), penalty_factor, min_segment_samples)
+
     # The Rust function returns indices in increasing order, so we can return directly
     return change_points
 

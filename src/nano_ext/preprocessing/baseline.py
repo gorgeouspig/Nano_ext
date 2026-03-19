@@ -16,7 +16,7 @@ from scipy.interpolate import UnivariateSpline
 from scipy.ndimage import uniform_filter1d
 
 from nano_ext.models import BaselineResult
-import nano_ext._nano_ext as nano_ext_core
+from nano_ext import local_baseline_percentile
 
 logger = logging.getLogger(__name__)
 
@@ -256,7 +256,7 @@ def _local_baseline_masked(
         # Convert to lists for Rust function (could be optimized to avoid copying)
         signal_list = signal.tolist()
         mask_list = mask.tolist()
-        result_list = nano_ext_core.local_baseline_percentile(
+        result_list = local_baseline_percentile(
             signal_list, mask_list, window_samples, percentile
         )
         return np.array(result_list, dtype=np.float64)
