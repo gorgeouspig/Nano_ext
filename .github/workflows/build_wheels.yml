@@ -60,6 +60,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: ./wheels
+          merge-multiple: true
 
       - name: Create Release
         id: create_release
