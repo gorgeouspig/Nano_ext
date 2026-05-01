@@ -257,38 +257,100 @@ class BaselineResult:
 class DetectionConfig:
     """Configuration for the event detection pipeline.
 
-    All parameters with sensible defaults; most can be auto-determined
-    from the data.
+    All parameters have sensible defaults; most can be left at their
+    default values for standard nanopore blockade experiments.
+
+    Attributes
+    ----------
+    apply_filter : bool
+        Whether to apply a low-pass filter before processing.  Set to
+        False if the signal has already been hardware-filtered.
+    pre_applied_filter_cutoff : float, optional
+        Effective cutoff frequency (Hz) when *apply_filter* is False.
+        Used only to set auto-detection thresholds; ignored otherwise.
+    filter_type : str
+        Filter design: ``"bessel"`` (recommended — maximally flat group
+        delay, minimal event-shape distortion) or ``"butterworth"``
+        (sharper roll-off but more phase distortion).
+    filter_order : int
+        Filter order.  Higher orders give sharper roll-off at the cost of
+        more transient ringing.  Default 4 is standard for nanopore data.
+    filter_cutoff : float, optional
+        Low-pass cutoff in Hz.  ``None`` uses ``sampling_rate / 10``
+        automatically.
+    detrend_method : str
+        Global baseline detrending applied before local estimation.
+        One of ``"none"`` (skip), ``"linear"``, ``"polynomial"``,
+        ``"spline"``.  Use ``"none"`` unless the baseline drifts strongly.
+    detrend_order : int
+        Polynomial order for ``detrend_method="polynomial"``.
+    baseline_window_sec : float
+        Sliding-window size in seconds for local baseline estimation.
+        Should be several times the typical inter-event interval.
+    baseline_iterations : int
+        Number of iterative refinement passes for baseline estimation.
+        More iterations improve exclusion of events from the estimate.
+    baseline_percentile : float
+        Percentile (0–100) used within each window to anchor the baseline.
+        90 works well for downward blockades (excludes the lower tail).
+    baseline_n_sigma : float
+        Points farther than this many noise standard deviations from the
+        current baseline estimate are masked as events during iteration.
+    gmm_max_components : int
+        Maximum number of Gaussian mixture components to test when
+        determining the detection threshold.
+    bic_criterion : str
+        Information criterion for GMM model selection: ``"bic"``
+        (preferred, penalises complexity more) or ``"aic"``.
+    event_direction : EventDirection
+        Which current deviations to treat as events: ``DOWN`` (blockades),
+        ``UP`` (spikes / anti-blockades), or ``BOTH``.
+    min_event_duration_sec : float, optional
+        Minimum event duration in seconds.  Events shorter than this are
+        discarded as noise.  ``None`` sets the threshold automatically
+        based on the filter rise time (~5 / filter_cutoff).
+    merge_gap_sec : float, optional
+        Maximum gap between adjacent events to merge them into one.
+        ``None`` sets the gap automatically (~1.5 / filter_cutoff).
+    min_segment_samples : int
+        Minimum number of samples required for a resolvable sub-level.
+        Related to the filter rise time; the default of 50 is suitable
+        for 100 kHz / 10 kHz cut-off recordings.
+    max_sublevel_depth : int
+        Maximum number of sub-level components (GMM) to test per event.
+    noise_estimation : str
+        Method for estimating noise standard deviation: ``"mad"`` (Median
+        Absolute Deviation — robust to outliers, recommended) or
+        ``"std"`` (standard deviation).
     """
 
     # --- Filtering ---
     apply_filter: bool = True
-    pre_applied_filter_cutoff: Optional[float] = None  # Hz; Used if apply_filter is False
-    filter_type: str = "bessel"  # "bessel" or "butterworth"
+    pre_applied_filter_cutoff: Optional[float] = None
+    filter_type: str = "bessel"
     filter_order: int = 4
-    filter_cutoff: Optional[float] = None  # Hz; None = auto (fs / 10)
+    filter_cutoff: Optional[float] = None
 
     # --- Baseline estimation ---
-    detrend_method: str = "polynomial"  # "polynomial", "linear", "spline"
+    detrend_method: str = "none"
     detrend_order: int = 3
-    baseline_window_sec: float = 5.0  # Window for local baseline [s]
+    baseline_window_sec: float = 5.0
     baseline_iterations: int = 3
     baseline_percentile: float = 90.0
-    baseline_n_sigma: float = 5.0  # Sigma threshold for iterative exclusion
+    baseline_n_sigma: float = 5.0
 
     # --- Threshold (GMM + BIC) ---
     gmm_max_components: int = 10
-    bic_criterion: str = "bic"  # "bic", "aic"
+    bic_criterion: str = "bic"
 
     # --- Event detection ---
     event_direction: EventDirection = EventDirection.DOWN
-    min_event_duration_sec: Optional[float] = None  # None = auto
-    merge_gap_sec: Optional[float] = None  # None = auto
+    min_event_duration_sec: Optional[float] = None
+    merge_gap_sec: Optional[float] = None
 
     # --- Sublevel analysis ---
-    changepoint_method: str = "binary_seg_bic"
     min_segment_samples: int = 50
     max_sublevel_depth: int = 5
 
     # --- Noise estimation ---
-    noise_estimation: str = "mad"  # "mad" or "std"
+    noise_estimation: str = "mad"

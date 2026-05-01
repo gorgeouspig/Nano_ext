@@ -1,6 +1,27 @@
-"""Nano_ext — Brand New Nanopore Signal Extraction.
+"""Nano_ext — Nanopore Signal Event Extraction.
 
-Event detection and analysis from nanopore current traces.
+Provides an objective, information-criterion-based toolkit for detecting and
+analysing ionic current blockade events in high-speed (>100 kHz) nanopore
+traces.
+
+Public API
+----------
+Data loading:
+    read_abf, read_binary  (nano_ext.io)
+
+Pipeline entry points:
+    run_pipeline(signal_data, config) -> PipelineResult
+    process_file(filepath, config)    -> PipelineResult
+
+Key data classes:
+    SignalData, DetectionConfig, PipelineResult, Event, SubLevel
+
+Output helpers:
+    write_events_to_csv, write_sublevels_to_csv
+    plot_pipeline_result
+
+Rust-accelerated primitives (advanced use):
+    pelt, local_baseline_percentile
 """
 
 from .models import (

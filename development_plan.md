@@ -2,6 +2,16 @@
 
 This document summarizes the requirements and development roadmap for the `Nano_ext` project, as discussed in the session `ses_30fdafa0dffejYZcR4JGjd7V0s`.
 
+## 0. How to Resume Development
+
+1. **Activate environment**: `conda activate nano_ext`
+2. **Confirm tests pass**: `pytest` → should finish in ~10s with all green
+3. **Check next task**: Look for the first 🔲 item in Section 4 (Roadmap) — that is what to work on next
+4. **Run slow tests before committing**: `pytest -m slow` (takes several minutes; covers GMM and Rust baseline)
+5. **Commit**: Stage your changes and commit to `main`
+
+**Current next task → Phase 4 items** (see Section 4) — all Phase 2 and 3 items are complete.
+
 ## 1. Project Overview
 
 `Nano_ext` is a Python-based toolkit (with Rust extensions) designed to extract events (blockades) from high-sampling rate (>100 kHz) nanopore current traces. It aims to provide an objective, information-criterion-based approach to thresholding and sub-level (multi-step) event analysis.
@@ -25,18 +35,24 @@ This document summarizes the requirements and development roadmap for the `Nano_
 
 ## 3. Current Implementation Status
 
-The project has a functional Python skeleton with several components completed:
+The project is functional end-to-end with both Python and Rust components in place:
 
-- [x] **Data IO**: `abf_reader.py` and `binary_reader.py` for loading signals.
-- [x] **Preprocessing**: `filters.py` (Bessel/Butterworth) and `baseline.py` (iterative drift correction).
-- [x] **Detection Core**: `threshold.py` (GMM+BIC) and `events.py` (threshold-based detection).
-- [x] **Sub-level Analysis**: `sublevel.py` and `changepoint.py` (recursive segmentation).
-- [x] **Pipeline**: `pipeline.py` for end-to-end orchestration.
-- [x] **CLI**: Implemented in `nano_ext/cli.py` with full configuration options.
-- [x] **Visualization**: Implemented in `nano_ext.outputs/visualize.py` for comprehensive result plotting.
-- [x] **Export**: Implemented in `nano_ext.outputs/csv_writer.py` for CSV/TSV output.
-- [ ] **Rust Extension**: `Cargo.toml` and Rust source code are not yet created.
-- [ ] **Testing**: Synthetic data generation exists (`testing/synthetic.py`), but formal unit tests are missing.
+- [x] **Data IO**: `io/abf_reader.py` and `io/binary_reader.py` for loading signals.
+- [x] **Preprocessing**: `preprocessing/filters.py` (Bessel/Butterworth) and `preprocessing/baseline.py` (iterative drift correction, Rust-accelerated local percentile).
+- [x] **Detection Core**: `detection/threshold.py` (GMM+BIC) and `detection/events.py` (threshold-based detection with run-length encoding and gap merging).
+- [x] **Sub-level Analysis**: `detection/sublevel.py` and `detection/changepoint.py` (recursive PELT-based segmentation).
+- [x] **Pipeline**: `pipeline.py` for end-to-end orchestration (`run_pipeline`, `process_file`).
+- [x] **CLI**: Implemented in `nano_ext/cli.py` (Click) with full configuration options.
+- [x] **Visualization**: `outputs/visualize.py` for comprehensive result plotting.
+- [x] **Export**: `outputs/csv_writer.py` for CSV/TSV output.
+- [x] **Rust Extension**: `rust/src/lib.rs` exposes `pelt()` and `local_baseline_percentile()` to Python as `nano_ext._nano_ext` via PyO3 + maturin. Cargo.toml configured.
+- [x] **Module Layout Cleanup**: `output` → `outputs` rename and `nano_ext_core` → `nano_ext._nano_ext` migration completed (resolves build conflicts and circular imports).
+- [x] **Synthetic Data**: `testing/synthetic.py` for generating ground-truth test data.
+- [x] **Unit Tests (initial)**: `tests/unit/test_pelt.py`, `tests/unit/test_sublevel.py` cover the Rust PELT bindings and GMM+BIC sub-level analysis.
+- [x] **CI**: `.github/workflows/build_wheels.yml` builds wheels for Linux / macOS / Windows on push to `main` and version tags (`v*`).
+- [ ] **Test Coverage Expansion**: IO, preprocessing (filters/baseline), threshold, events, and end-to-end pipeline tests are still missing.
+- [ ] **Documentation**: README is updated, but API-level docs and example notebooks remain to be written.
+- [ ] **Negative Control Integration**: See Section 6.
 
 ## 4. Development Roadmap
 
@@ -46,23 +62,72 @@ The project has a functional Python skeleton with several components completed:
 ✅ **Export Module**: Created `nano_ext.outputs/csv_writer.py` to save event statistics to CSV/TSV.
 ✅ **Baseline Drift Refinement**: Enhanced the iterative baseline estimator in `nano_ext/preprocessing/baseline.py` to robustly handle upward-drifting baselines as requested.
 
-### Phase 2: Python Testing & Documentation (Short-term)
-1.  **Unit Testing**: Establish a test suite in `/tests` using `pytest` to validate core components (IO, preprocessing, detection).
-2.  **Synthetic Data Validation**: Expand `testing/synthetic.py` to generate test data with known event characteristics for validation.
-3.  **Documentation**: Improve docstrings and create user-facing documentation (README, API docs).
-4.  **Example Scripts**: Create example usage scripts in `/examples` demonstrating common workflows.
+### Phase 2: Python Testing & Documentation (Partially Completed / Ongoing)
+1.  ✅ **Initial Unit Tests**: `test_pelt.py` and `test_sublevel.py` validate Rust bindings and sub-level analysis.
+2.  ✅ **Synthetic Data Generation**: `testing/synthetic.py` produces traces with known event characteristics.
+3.  ✅ **Example Script**: `examples/example_basic_usage.py` demonstrates the full pipeline.
+4.  ✅ **Test Coverage Expansion**: `test_filters.py`, `test_baseline.py`, `test_threshold.py`, `test_events.py`, `test_pipeline.py` added. GMM/Rust-heavy tests marked `@pytest.mark.slow`; `pytest` (default) runs in ~10s, `pytest -m slow` for full suite.
+5.  ✅ **API Documentation**: Improved docstrings across all public-API modules — `DetectionConfig` fields, `csv_writer`, `changepoint`, `sublevel`, `pipeline`, and `__init__`. Sphinx/mkdocs site deferred to Phase 4.
 
-### Phase 3: Performance Optimization (Mid-term)
-1.  **Rust Project Setup**: Initialize `maturin` and create `Cargo.toml`.
-2.  **Rust Kernel Implementation**: 
-    - Port sliding window percentile/mean calculations to Rust.
-    - Implement the **PELT** (Pruned Exact Linear Time) algorithm in Rust for fast change-point detection.
-3.  **Integration**: Replace Python bottleneck functions with Rust calls in `nano_ext/preprocessing/baseline.py` and `nano_ext/detection/changepoint.py`.
+### Phase 3: Performance Optimization (Completed)
+1.  ✅ **Rust Project Setup**: `Cargo.toml`, `rust/src/lib.rs`, and maturin/pyproject configuration in place.
+2.  ✅ **Rust Kernel Implementation**: 
+    - `local_baseline_percentile()` — sliding-window percentile for iterative baseline estimation.
+    - `pelt()` — Pruned Exact Linear Time change-point detection for sub-level analysis.
+3.  ✅ **Integration**: Python `preprocessing/baseline.py` and `detection/sublevel.py` call into the Rust extension via `nano_ext._nano_ext`.
+4.  ✅ **Build & Distribution**: GitHub Actions builds platform-specific wheels (Linux, macOS, Windows) on push to `main` and version tags.
+5.  ✅ **Benchmarking**: Quantitative comparison completed (`scripts/benchmark_rust_vs_python.py`).
+
+    | Kernel | Sizes tested | Rust vs Python |
+    |---|---|---|
+    | `local_baseline_percentile` | n=500–5,000, window=51 | **~5.5×** |
+    | `pelt` | n=300–1,500 | **~34×** |
+
+    **Key findings:**
+    - `pelt` Rust scaling: n=1k→24ms, n=5k→320ms, n=10k→1.2s (O(n²) dominates for large events).
+    - `local_baseline_percentile` has a **performance cliff at n=500,000**: the direct path (n≤500k) is O(n×window), so a 500k-sample signal with window=5001 takes ~94s; the subsampled path (n>500k) takes only ~1.9s (50× faster). This means short recordings (<5s at 100kHz) with large windows are slow.
+    - **✅ Fixed (Phase 4)**: changed both Rust and Python paths to a product-based threshold (`n × window > 10M` instead of `n > 500k`). Also fixed an O(n × sparse) linear-search interpolation loop to O(1) using evenly-spaced index arithmetic. New timings: n=100k/window=5001 → **67 ms** (was 19 s); n=500k/window=5001 → **360 ms** (was 94 s).
 
 ### Phase 4: Advanced Analysis & Validation (Long-term)
 1.  **Multi-directional Detection**: Support detection of both blockades and current spikes in the same trace.
 2.  **Automated Parameter Tuning**: Use noise characteristics to automatically set `min_duration` and `merge_gap`.
 3.  **Performance Benchmarking**: Benchmark Rust-accelerated components against pure Python implementations.
+4.  **Negative Control Integration**: Use solvent-only control traces to characterize baseline noise (see Section 6).
+
+## 6. Design Note: Negative Control Data for Noise Characterization
+
+### Motivation
+In nanopore experiments, a negative control measurement (solvent / buffer only, no analyte) is routinely acquired. This trace contains the open-pore current with all instrumental and electrochemical noise but **no translocation events**. Currently, `Nano_ext` estimates noise statistics from the same trace it analyzes, which has two weaknesses:
+
+1.  **Event contamination**: When events are frequent or long, the noise/baseline statistics are biased by event samples themselves, even with iterative outlier rejection.
+2.  **Threshold sensitivity**: GMM+BIC thresholding implicitly assumes the baseline component is well-separated from event components. With heavy event load or low SNR, the baseline Gaussian is poorly estimated.
+
+A control trace eliminates both issues by providing a direct, event-free reference distribution.
+
+### Proposed Use Cases
+
+| Stage | How control data helps |
+|:---|:---|
+| **Baseline drift model** | Fit drift parameters (polynomial/spline order, smoothing window) on control to avoid over/under-fitting on event-laden traces. |
+| **Noise floor (σ)** | Direct estimate of noise std without robust trimming. Feeds into threshold setting (e.g. `baseline − k·σ`) as a fallback when GMM is ambiguous. |
+| **GMM prior** | Use the control's single-component fit (μ, σ) as an informative prior for the baseline component in the sample's GMM, stabilizing component assignment. |
+| **Threshold validation** | Run the same threshold on the control: any "events" detected are false positives. Tune detection parameters until control FPR is below a target (e.g. < 1 event/min). |
+| **Sub-level BIC penalty** | Use control noise statistics to calibrate the BIC penalty, since the optimal penalty depends on noise color/bandwidth. |
+
+### Proposed API Sketch
+- Extend `DetectionConfig` with optional `control_signal: SignalData | None`.
+- Add `preprocessing/control.py` to compute control-derived statistics (`ControlStats` dataclass: `noise_std`, `baseline_mean`, `drift_coeffs`, ...).
+- Pipeline accepts an optional control trace; when present, threshold/baseline stages consume `ControlStats` instead of (or in addition to) self-estimation.
+- CLI: `--control PATH` flag pointing to a separate ABF/binary file.
+
+### Open Questions / Caveats
+- **Matching conditions**: Control and sample must share sampling rate, filter cutoff, applied voltage, and ideally the same pore (or same chip). Mismatched conditions can mislead more than help. The pipeline should validate metadata and warn on discrepancies.
+- **Temporal stationarity**: Pore noise can drift across hours. A control taken far from the sample run may not represent the sample's noise. Consider supporting *bracketed* controls (before + after).
+- **Backwards compatibility**: Control input must remain optional — most users will run without it, and the existing self-estimation path must continue to work unchanged.
+- **Synthetic validation**: Test the control-augmented pipeline on synthetic data where ground-truth noise is known, to confirm the integration improves (rather than degrades) detection metrics.
+
+### Recommendation
+Adopt this as a **Phase 4 feature** (not blocking the current MVP). Start with the simplest integration — using control noise std as a sanity check / fallback threshold — before layering on GMM priors and FPR-tuned threshold calibration.
 
 ## 5. Technical Details (Algorithms)
 

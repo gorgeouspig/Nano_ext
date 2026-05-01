@@ -95,71 +95,68 @@ fn local_baseline_percentile(signal: Vec<f64>, mask: Vec<bool>, window_samples: 
         }
     }
     
-    // For very large signals, we subsample and interpolate
-    if n_samples > 500_000 {
-        // Subsample: compute baseline at every Kth point, then interpolate
+    // Compute fallback median (median of non-NaN values in masked_signal)
+    let fallback = {
+        let mut vals: Vec<f64> = masked_signal.iter().filter(|x| !x.is_nan()).cloned().collect();
+        if vals.is_empty() {
+            0.0
+        } else {
+            vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            vals[vals.len() / 2]
+        }
+    };
+    
+    // Switch to subsampled path when n_samples * window_samples exceeds a product
+    // threshold. This avoids O(n * window) blow-up for short signals with large
+    // windows (e.g. a 1-second recording with a 5-second baseline window).
+    let use_subsample = (n_samples as u64) * (window_samples as u64) > 10_000_000;
+
+    if use_subsample {
+        // Subsample: compute baseline at every `step`-th point, then interpolate.
+        // step is chosen so that ~4 sparse points fit inside one window.
         let step = std::cmp::max(1, window_samples / 4);
-        let indices: Vec<usize> = (0..n_samples).step_by(step).collect();
-        let mut baseline_sparse = vec![0.0; indices.len()];
-        
-        for (i, &center) in indices.iter().enumerate() {
-            let start = std::cmp::max(0, center as isize - half_win as isize) as usize;
+        let n_sparse = (n_samples + step - 1) / step; // ceil division
+        let mut baseline_sparse = vec![0.0f64; n_sparse];
+
+        for si in 0..n_sparse {
+            let center = si * step;
+            let start = center.saturating_sub(half_win);
             let end = std::cmp::min(n_samples, center + half_win);
             if start >= end {
-                if i > 0 {
-                    baseline_sparse[i] = baseline_sparse[i - 1];
-                }
+                baseline_sparse[si] = fallback;
                 continue;
             }
-            
             let window = &masked_signal[start..end];
             let valid: Vec<f64> = window.iter().filter(|x| !x.is_nan()).cloned().collect();
-            if valid.len() > 0 {
-                // Calculate percentile
-                let mut sorted = valid.clone();
+            if !valid.is_empty() {
+                let mut sorted = valid;
                 sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
-                let index = ((percentile / 100.0) * (sorted.len() as f64 - 1.0)).round() as usize;
-                baseline_sparse[i] = sorted[index];
-            } else if i > 0 {
-                baseline_sparse[i] = baseline_sparse[i - 1];
+                let idx = ((percentile / 100.0) * (sorted.len() as f64 - 1.0)).round() as usize;
+                baseline_sparse[si] = sorted[idx.min(sorted.len() - 1)];
+            } else {
+                baseline_sparse[si] = fallback;
             }
         }
-        
-        // Interpolate to full resolution
+
+        // Interpolate to full resolution.
+        // Since sparse indices are evenly spaced (step apart), the bracket for
+        // position i is O(1): left = i/step, right = left+1.
         for i in 0..n_samples {
-            // Find the two closest indices in our sparse array
-            let mut left_idx = 0;
-            let mut right_idx = indices.len() - 1;
-            
-            if indices.len() < 2 {
-                baseline[i] = if indices.len() > 0 { baseline_sparse[0] } else { 0.0 };
-                continue;
-            }
-            
-            // Binary search for the right interval
-            for j in 0..indices.len() {
-                if indices[j] > i as usize {
-                    right_idx = j;
-                    left_idx = j.saturating_sub(1);
-                    break;
-                }
-            }
-            
-            if left_idx == right_idx {
-                baseline[i] = baseline_sparse[left_idx];
+            let left_si = (i / step).min(n_sparse.saturating_sub(2));
+            let right_si = (left_si + 1).min(n_sparse - 1);
+            if left_si == right_si {
+                baseline[i] = baseline_sparse[left_si];
             } else {
-                // Linear interpolation
-                let left_val = baseline_sparse[left_idx];
-                let right_val = baseline_sparse[right_idx];
-                let left_pos = indices[left_idx] as f64;
-                let right_pos = indices[right_idx] as f64;
+                let left_pos = (left_si * step) as f64;
+                let right_pos = (right_si * step) as f64;
                 let pos = i as f64;
-                
-                if right_pos == left_pos {
-                    baseline[i] = left_val;
+                let t = if right_pos > left_pos {
+                    (pos - left_pos) / (right_pos - left_pos)
                 } else {
-                    baseline[i] = left_val + (right_val - left_val) * (pos - left_pos) / (right_pos - left_pos);
-                }
+                    0.0
+                };
+                baseline[i] = baseline_sparse[left_si]
+                    + t * (baseline_sparse[right_si] - baseline_sparse[left_si]);
             }
         }
     } else {
@@ -168,9 +165,7 @@ fn local_baseline_percentile(signal: Vec<f64>, mask: Vec<bool>, window_samples: 
             let start = std::cmp::max(0, center as isize - half_win as isize) as usize;
             let end = std::cmp::min(n_samples, center + half_win);
             if start >= end {
-                if center > 0 {
-                    baseline[center] = baseline[center - 1];
-                }
+                baseline[center] = fallback;
                 continue;
             }
             
@@ -182,8 +177,8 @@ fn local_baseline_percentile(signal: Vec<f64>, mask: Vec<bool>, window_samples: 
                 sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
                 let index = ((percentile / 100.0) * (sorted.len() as f64 - 1.0)).round() as usize;
                 baseline[center] = sorted[index];
-            } else if center > 0 {
-                baseline[center] = baseline[center - 1];
+            } else {
+                baseline[center] = fallback;
             }
         }
     }

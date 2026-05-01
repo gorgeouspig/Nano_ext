@@ -1,8 +1,14 @@
 """Sub-level analysis for multi-level nanopore events.
 
-Uses changepoint detection (binary segmentation + BIC) to identify
-level transitions within individual events, converting single-level
-events into multi-level events with classified sub-levels.
+Uses Gaussian Mixture Models (GMM) with Bayesian Information Criterion (BIC)
+to objectively determine the number of distinct current levels within each
+detected event — the same information-theoretic approach used for global
+threshold determination.
+
+Edge artefacts introduced by the low-pass filter are removed before fitting
+by trimming a margin proportional to the filter rise time at both ends of
+the event, preventing the filter's finite transition slope from being
+misidentified as a step transition.
 """
 
 from __future__ import annotations
@@ -10,9 +16,9 @@ from __future__ import annotations
 from typing import Optional
 
 import numpy as np
+from sklearn.mixture import GaussianMixture
 
 from nano_ext.models import Event, EventType, SubLevel
-from nano_ext.detection.changepoint import binary_segmentation_bic, segment_signal
 
 
 def analyze_sublevels(
@@ -20,133 +26,110 @@ def analyze_sublevels(
     signal: np.ndarray,
     baseline: np.ndarray,
     sampling_rate: float,
-    min_segment_samples: int = 50,
-    penalty_factor: float = 1.5,
+    filter_cutoff: Optional[float] = None,
     max_levels: int = 5,
-    min_level_diff_sigma: float = 1.0,
-    noise_std: Optional[float] = None,
+    min_segment_samples: int = 50,
 ) -> Event:
-    """Analyze an event for sub-level structure.
-
-    Applies changepoint detection to the event region of the signal,
-    identifies sub-levels, and updates the Event object accordingly.
+    """Analyze an event for sub-level structure using GMM + BIC.
 
     Parameters
     ----------
     event : Event
-        A previously detected event to analyze for sub-levels.
+        A previously detected event.
     signal : np.ndarray
-        The full (filtered) signal array.
+        Full filtered signal array (absolute current, not residual).
     baseline : np.ndarray
-        The estimated baseline array (same length as signal).
+        Estimated baseline array (same length as signal).
     sampling_rate : float
         Sampling rate in Hz.
-    min_segment_samples : int
-        Minimum samples per sub-level segment. Passed to the changepoint
-        detector.
-    penalty_factor : float
-        BIC penalty multiplier for changepoint detection. Higher values
-        produce fewer (more confident) splits.
+    filter_cutoff : float, optional
+        Low-pass filter cutoff frequency in Hz. Used to compute how many
+        samples to trim at each end of the event to remove filter
+        transients. If None, no trimming is applied.
     max_levels : int
-        Maximum number of sub-levels to keep. If changepoints produce
-        more segments, the smallest transitions are pruned.
-    min_level_diff_sigma : float
-        Minimum difference (in units of noise_std) between adjacent
-        sub-level means for the split to be accepted. Merges adjacent
-        sub-levels that are too similar.
-    noise_std : float, optional
-        Estimated noise standard deviation. If None, estimated from
-        the event signal using MAD.
+        Maximum number of GMM components (sub-levels) to consider.
+    min_segment_samples : int
+        Minimum number of samples for a sub-level segment to be
+        physically resolvable. Segments shorter than this are absorbed
+        into their nearest neighbor by GMM mean distance.
 
     Returns
     -------
     Event
-        Updated event with sub-level information populated.
-        The event_type is set to MULTI_LEVEL if more than one
-        sub-level is found, otherwise SINGLE.
+        Updated event. event_type is set to MULTI_LEVEL if BIC selects
+        more than one component; otherwise the event is returned unchanged
+        as a single-level event.
     """
     start = event.start_idx
     end = event.end_idx
 
-    # Guard: event too short for meaningful analysis
-    if (end - start) < 2 * min_segment_samples:
+    # --- Edge trimming: remove low-pass filter transients ---
+    # Approximate 10-90% rise time of a 4th-order Bessel filter: ~2 / cutoff
+    if filter_cutoff is not None and filter_cutoff > 0:
+        edge_samples = max(0, int(2.0 * sampling_rate / filter_cutoff))
+    else:
+        edge_samples = 0
+
+    inner_start = start + edge_samples
+    inner_end = end - edge_samples
+
+    if (inner_end - inner_start) < 2 * min_segment_samples:
         return event
 
-    event_signal = signal[start:end]
-    event_baseline = baseline[start:end]
+    event_signal = signal[inner_start:inner_end]
 
-    # Estimate noise from event signal if not provided
-    if noise_std is None:
-        noise_std = float(np.median(np.abs(event_signal - np.median(event_signal))) * 1.4826)
-    if noise_std < 1e-20:
-        noise_std = 1e-20
-
-    # --- Run changepoint detection on raw signal within the event ---
-    changepoints = binary_segmentation_bic(
-        event_signal,
-        min_segment_samples=min_segment_samples,
-        penalty_factor=penalty_factor,
-    )
-
-    if not changepoints:
-        # No changepoints found — single-level event, nothing to update
+    # --- GMM + BIC: objective determination of number of levels ---
+    max_k = min(max_levels, (inner_end - inner_start) // min_segment_samples)
+    if max_k < 1:
         return event
 
-    # --- Segment the signal at the changepoints ---
-    segments = segment_signal(event_signal, changepoints)
+    k_optimal, best_gmm = _fit_gmm_bic(event_signal, max_components=max_k)
 
-    # --- Prune insignificant transitions ---
-    # Merge adjacent segments whose mean difference is less than
-    # min_level_diff_sigma * noise_std
-    segments = _merge_similar_segments(
-        event_signal, segments, min_level_diff_sigma * noise_std
-    )
+    if k_optimal == 1 or best_gmm is None:
+        return event
 
-    # --- Enforce max_levels ---
-    while len(segments) > max_levels:
-        segments = _merge_smallest_transition(event_signal, segments)
+    # --- Temporal segmentation via hard assignment ---
+    X = event_signal.reshape(-1, 1)
+    labels = best_gmm.predict(X)
+    gmm_means = best_gmm.means_.flatten()
+
+    segments = _rle_segments(labels)
+    segments = _merge_short_segments(segments, min_segment_samples, gmm_means)
+    segments = _merge_same_label(segments)
 
     if len(segments) <= 1:
-        # After merging, only one level — single-level event
         return event
 
     # --- Build SubLevel objects ---
-    # Rank levels by mean current: level_index 0 = deepest blockade
-    #   (lowest mean current for down events, highest for up events)
-    # For generality, sort by mean_current ascending and assign indices.
-    sorted_means = sorted(seg["mean"] for seg in segments)
+    sorted_means = np.sort(gmm_means)
 
     sublevels: list[SubLevel] = []
     for seg in segments:
-        seg_start = start + seg["start"]
-        seg_end = start + seg["end"]
+        abs_start = inner_start + seg["start"]
+        abs_end = inner_start + seg["end"]
+        seg_signal = signal[abs_start:abs_end]
 
-        seg_baseline = baseline[seg_start:seg_end]
-        mean_bl = float(np.mean(seg_baseline))
+        mean_current = float(np.mean(seg_signal))
+        seg_gmm_mean = gmm_means[seg["label"]]
+        level_idx = int(np.argmin(np.abs(sorted_means - seg_gmm_mean)))
 
-        # Level index: rank by mean current (ascending = deeper first)
-        level_idx = sorted_means.index(seg["mean"])
-
-        sublevel = SubLevel(
-            start_idx=seg_start,
-            end_idx=seg_end,
-            start_time=seg_start / sampling_rate,
-            end_time=seg_end / sampling_rate,
-            duration=(seg_end - seg_start) / sampling_rate,
-            mean_current=seg["mean"],
-            std_current=seg["std"],
+        sublevels.append(SubLevel(
+            start_idx=abs_start,
+            end_idx=abs_end,
+            start_time=abs_start / sampling_rate,
+            end_time=abs_end / sampling_rate,
+            duration=(abs_end - abs_start) / sampling_rate,
+            mean_current=mean_current,
+            std_current=float(np.std(seg_signal)),
             level_index=level_idx,
-        )
-        sublevels.append(sublevel)
+        ))
 
-    # Sort sub-levels chronologically
-    sublevels.sort(key=lambda sl: sl.start_idx)
+    if len(sublevels) <= 1:
+        return event
 
-    # --- Update the Event ---
-    # Recompute overall event stats to be consistent
     event.n_levels = len(sublevels)
     event.sublevels = sublevels
-    event.event_type = EventType.MULTI_LEVEL if len(sublevels) > 1 else EventType.SINGLE
+    event.event_type = EventType.MULTI_LEVEL
 
     return event
 
@@ -156,43 +139,40 @@ def analyze_events_sublevels(
     signal: np.ndarray,
     baseline: np.ndarray,
     sampling_rate: float,
-    min_segment_samples: int = 50,
-    penalty_factor: float = 1.5,
+    filter_cutoff: Optional[float] = None,
     max_levels: int = 5,
-    min_level_diff_sigma: float = 1.0,
-    noise_std: Optional[float] = None,
+    min_segment_samples: int = 50,
 ) -> list[Event]:
     """Analyze all events for sub-level structure.
 
-    Convenience function that applies ``analyze_sublevels`` to each
-    event in the list.
+    Applies :func:`analyze_sublevels` to every event in the list and
+    returns the updated list.  Events that do not contain resolvable
+    sub-levels are returned unchanged.
 
     Parameters
     ----------
     events : list[Event]
-        List of detected events.
+        Previously detected events (output of ``detect_events``).
     signal : np.ndarray
-        The full (filtered) signal array.
+        Full filtered signal array (absolute current values, not residual).
     baseline : np.ndarray
-        The estimated baseline array.
+        Estimated baseline array, same length as *signal*.
     sampling_rate : float
         Sampling rate in Hz.
-    min_segment_samples : int
-        Minimum samples per sub-level segment.
-    penalty_factor : float
-        BIC penalty multiplier.
+    filter_cutoff : float, optional
+        Low-pass filter cutoff in Hz; used to trim filter transients at
+        event edges.  Pass the same value used in the filtering step.
     max_levels : int
-        Maximum number of sub-levels per event.
-    min_level_diff_sigma : float
-        Minimum mean difference between adjacent sub-levels
-        (in noise_std units).
-    noise_std : float, optional
-        Noise standard deviation. If None, estimated per-event.
+        Maximum number of GMM components (sub-levels) to test per event.
+    min_segment_samples : int
+        Minimum number of samples for a sub-level to be considered
+        physically resolvable.
 
     Returns
     -------
     list[Event]
-        Events with sub-level information updated.
+        Same list of events with sub-level information added where BIC
+        supports more than one level.
     """
     return [
         analyze_sublevels(
@@ -200,108 +180,114 @@ def analyze_events_sublevels(
             signal=signal,
             baseline=baseline,
             sampling_rate=sampling_rate,
-            min_segment_samples=min_segment_samples,
-            penalty_factor=penalty_factor,
+            filter_cutoff=filter_cutoff,
             max_levels=max_levels,
-            min_level_diff_sigma=min_level_diff_sigma,
-            noise_std=noise_std,
+            min_segment_samples=min_segment_samples,
         )
         for ev in events
     ]
 
 
-# ---- Internal helpers ----
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
 
-
-def _merge_similar_segments(
+def _fit_gmm_bic(
     signal: np.ndarray,
+    max_components: int,
+) -> tuple[int, Optional[GaussianMixture]]:
+    """Fit GMMs with k=1..max_components; return (k_optimal, best_gmm)."""
+    X = signal.reshape(-1, 1)
+    best_score = np.inf
+    best_k = 1
+    best_gmm: Optional[GaussianMixture] = None
+
+    for k in range(1, max_components + 1):
+        gmm = GaussianMixture(
+            n_components=k,
+            covariance_type="full",
+            max_iter=200,
+            n_init=3,
+            random_state=0,
+        )
+        try:
+            gmm.fit(X)
+            score = gmm.bic(X)
+        except Exception:
+            break
+        if score < best_score:
+            best_score = score
+            best_k = k
+            best_gmm = gmm
+
+    return best_k, best_gmm
+
+
+def _rle_segments(labels: np.ndarray) -> list[dict]:
+    """Run-length encode a label array into segment dicts."""
+    if len(labels) == 0:
+        return []
+
+    segments: list[dict] = []
+    current = int(labels[0])
+    seg_start = 0
+
+    for i in range(1, len(labels)):
+        if int(labels[i]) != current:
+            segments.append({"label": current, "start": seg_start, "end": i})
+            current = int(labels[i])
+            seg_start = i
+
+    segments.append({"label": current, "start": seg_start, "end": len(labels)})
+    return segments
+
+
+def _merge_short_segments(
     segments: list[dict],
-    min_diff: float,
+    min_n: int,
+    gmm_means: np.ndarray,
 ) -> list[dict]:
-    """Merge adjacent segments whose means differ by less than min_diff.
+    """Absorb segments shorter than min_n into their nearest neighbor."""
+    segments = [dict(s) for s in segments]
 
-    Parameters
-    ----------
-    signal : np.ndarray
-        Signal used to recompute segment stats after merging.
-    segments : list[dict]
-        Segment dicts from ``segment_signal``.
-    min_diff : float
-        Minimum absolute mean difference to keep a transition.
+    while len(segments) > 1:
+        lengths = [s["end"] - s["start"] for s in segments]
+        min_len = min(lengths)
+        if min_len >= min_n:
+            break
 
-    Returns
-    -------
-    list[dict]
-        Merged segments.
-    """
-    if len(segments) <= 1:
+        idx = lengths.index(min_len)
+        seg_mean = gmm_means[segments[idx]["label"]]
+
+        if idx == 0:
+            neighbor = 1
+        elif idx == len(segments) - 1:
+            neighbor = idx - 1
+        else:
+            left_diff = abs(seg_mean - gmm_means[segments[idx - 1]["label"]])
+            right_diff = abs(seg_mean - gmm_means[segments[idx + 1]["label"]])
+            neighbor = idx - 1 if left_diff <= right_diff else idx + 1
+
+        if neighbor < idx:
+            segments[neighbor]["end"] = segments[idx]["end"]
+        else:
+            segments[neighbor]["start"] = segments[idx]["start"]
+
+        segments.pop(idx)
+
+    return segments
+
+
+def _merge_same_label(segments: list[dict]) -> list[dict]:
+    """Merge consecutive segments that share the same label."""
+    if not segments:
         return segments
 
-    merged = [segments[0]]
+    merged = [dict(segments[0])]
     for seg in segments[1:]:
-        prev = merged[-1]
-        if abs(seg["mean"] - prev["mean"]) < min_diff:
-            # Merge: extend previous segment
-            new_start = prev["start"]
-            new_end = seg["end"]
-            combined = signal[new_start:new_end]
-            merged[-1] = {
-                "start": new_start,
-                "end": new_end,
-                "mean": float(np.mean(combined)),
-                "std": float(np.std(combined)),
-                "n_samples": new_end - new_start,
-            }
+        if seg["label"] == merged[-1]["label"]:
+            merged[-1]["end"] = seg["end"]
         else:
-            merged.append(seg)
+            merged.append(dict(seg))
 
     return merged
-
-
-def _merge_smallest_transition(
-    signal: np.ndarray,
-    segments: list[dict],
-) -> list[dict]:
-    """Merge the pair of adjacent segments with the smallest mean difference.
-
-    Parameters
-    ----------
-    signal : np.ndarray
-        Signal used to recompute stats after merging.
-    segments : list[dict]
-        Segment dicts.
-
-    Returns
-    -------
-    list[dict]
-        Segments with one fewer element.
-    """
-    if len(segments) <= 1:
-        return segments
-
-    # Find adjacent pair with smallest absolute mean difference
-    min_diff = float("inf")
-    min_idx = 0
-    for i in range(len(segments) - 1):
-        diff = abs(segments[i + 1]["mean"] - segments[i]["mean"])
-        if diff < min_diff:
-            min_diff = diff
-            min_idx = i
-
-    # Merge segments[min_idx] and segments[min_idx + 1]
-    s1 = segments[min_idx]
-    s2 = segments[min_idx + 1]
-    new_start = s1["start"]
-    new_end = s2["end"]
-    combined = signal[new_start:new_end]
-
-    merged_seg = {
-        "start": new_start,
-        "end": new_end,
-        "mean": float(np.mean(combined)),
-        "std": float(np.std(combined)),
-        "n_samples": new_end - new_start,
-    }
-
-    result = segments[:min_idx] + [merged_seg] + segments[min_idx + 2:]
-    return result

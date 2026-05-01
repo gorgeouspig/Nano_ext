@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 def estimate_baseline(
     signal: np.ndarray,
     sampling_rate: float,
-    detrend_method: str = "polynomial",
+    detrend_method: str = "none",
     detrend_order: int = 3,
     window_sec: float = 5.0,
     n_iterations: int = 3,
@@ -78,8 +78,23 @@ def estimate_baseline(
     if window_samples % 2 == 0:
         window_samples += 1
 
-    # Initial mask: all samples are baseline candidates
-    mask = np.ones(n_samples, dtype=bool)
+    # Improved mask initialization: use provisional baseline to avoid deadlock
+    # Compute provisional baseline using the entire signal (no masking)
+    provisional_mask = np.ones(n_samples, dtype=bool)
+    provisional_baseline = _local_baseline_masked(
+        detrended, provisional_mask, window_samples, percentile
+    )
+    provisional_residual = detrended - provisional_baseline
+    # Estimate noise from provisional residual
+    if len(provisional_residual) > 10:
+        provisional_noise_std = _estimate_noise(provisional_residual, noise_estimation)
+    else:
+        provisional_noise_std = _estimate_noise(provisional_residual, noise_estimation)
+    # Initial mask: exclude points that deviate significantly from provisional baseline
+    mask = np.abs(provisional_residual) < n_sigma * provisional_noise_std
+    # Ensure we have enough baseline candidates; if not, fall back to all True
+    if mask.sum() < 10:
+        mask = np.ones(n_samples, dtype=bool)
 
     local_baseline = np.zeros(n_samples, dtype=np.float64)
 
@@ -184,7 +199,7 @@ def _estimate_trend(
         for _ in range(3):  # 3 iterations of outlier rejection
             fitted = np.polyval(coeffs, t_sub)
             residuals = s_sub - fitted
-            
+
             std_residuals: float
             if mask.sum() > order + 1 and len(residuals[mask]) > 0:
                 std_residuals = np.std(residuals[mask])
@@ -253,7 +268,6 @@ def _local_baseline_masked(
     """
     # Use Rust implementation for performance
     try:
-        # Convert to lists for Rust function (could be optimized to avoid copying)
         signal_list = signal.tolist()
         mask_list = mask.tolist()
         result_list = local_baseline_percentile(
@@ -261,7 +275,6 @@ def _local_baseline_masked(
         )
         return np.array(result_list, dtype=np.float64)
     except Exception as e:
-        # Fallback to Python implementation if Rust fails
         logger.warning(f"Rust baseline estimation failed, falling back to Python: {e}")
         return _local_baseline_masked_python(signal, mask, window_samples, percentile)
 
@@ -277,13 +290,15 @@ def _local_baseline_masked_python(
     half_win = window_samples // 2
     baseline = np.zeros(n_samples, dtype=np.float64)
 
+    fallback = np.percentile(signal, 90.0)
+
     # Replace event samples with NaN for percentile calculation
     masked_signal = signal.copy()
     masked_signal[~mask] = np.nan
 
-    # Use stride-based approach for efficiency
-    # For very large signals, we subsample and interpolate
-    if n_samples > 500_000:
+    # Switch to the subsampled path when the direct O(n*window) work exceeds
+    # a threshold — same logic as the Rust kernel.
+    if n_samples * window_samples > 10_000_000:
         # Subsample: compute baseline at every Kth point, then interpolate
         step = max(1, window_samples // 4)
         indices = np.arange(0, n_samples, step)
@@ -296,8 +311,8 @@ def _local_baseline_masked_python(
             valid = window[~np.isnan(window)]
             if len(valid) > 0:
                 baseline_sparse[i] = np.percentile(valid, percentile)
-            elif i > 0:
-                baseline_sparse[i] = baseline_sparse[i - 1]
+            else:
+                baseline_sparse[i] = fallback
 
         # Interpolate to full resolution
         baseline = np.interp(np.arange(n_samples), indices, baseline_sparse)
@@ -309,8 +324,8 @@ def _local_baseline_masked_python(
             valid = window[~np.isnan(window)]
             if len(valid) > 0:
                 baseline[center] = np.percentile(valid, percentile)
-            elif center > 0:
-                baseline[center] = baseline[center - 1]
+            else:
+                baseline[center] = fallback
 
     # Smooth the baseline to remove discontinuities
     smooth_window = max(3, window_samples // 10)

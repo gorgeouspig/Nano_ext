@@ -65,10 +65,12 @@ class PipelineResult:
 
     @property
     def n_events(self) -> int:
+        """Total number of detected events."""
         return len(self.events)
 
     @property
     def n_multilevel(self) -> int:
+        """Number of events classified as multi-level (stepwise)."""
         return sum(1 for ev in self.events if ev.is_multilevel)
 
     def summary(self) -> str:
@@ -201,6 +203,11 @@ def run_pipeline(
         min_event_duration_sec=config.min_event_duration_sec,
         merge_gap_sec=config.merge_gap_sec,
         filter_cutoff=cutoff,
+        # Pass GMM parameters for improved event detection
+        gmm_means=th_result.component_means,
+        gmm_stds=th_result.component_stds,
+        gmm_weights=th_result.component_weights,
+        baseline_component_idx=th_result.baseline_component_idx,
     )
     if verbose:
         logger.info(f"  Events detected: {len(events)}")
@@ -216,10 +223,9 @@ def run_pipeline(
             signal=filtered,
             baseline=bl_result.local_baseline,
             sampling_rate=sr,
-            min_segment_samples=config.min_segment_samples,
-            penalty_factor=1.5,
+            filter_cutoff=cutoff,
             max_levels=config.max_sublevel_depth,
-            noise_std=bl_result.noise_std,
+            min_segment_samples=config.min_segment_samples,
         )
         n_multi = sum(1 for ev in events if ev.is_multilevel)
         if verbose:

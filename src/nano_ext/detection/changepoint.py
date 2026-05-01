@@ -18,11 +18,33 @@ def binary_segmentation_bic(
     min_segment_samples: int = 50,
     penalty_factor: float = 1.5,
 ) -> list[int]:
-    # ... (omitted) ...
-    # Call the Rust PELT implementation
-    change_points = pelt(signal.tolist(), penalty_factor, min_segment_samples)
+    """Detect change points in *signal* using the Rust PELT implementation.
 
-    # The Rust function returns indices in increasing order, so we can return directly
+    Delegates directly to the ``pelt`` Rust extension, which minimises a
+    Gaussian log-likelihood cost function plus a BIC-scaled penalty for each
+    additional change point.
+
+    Parameters
+    ----------
+    signal : np.ndarray
+        1-D signal segment to analyse (typically a single event's current
+        trace after baseline subtraction).
+    min_segment_samples : int
+        Minimum number of samples between consecutive change points.
+        Should be at least the filter rise-time in samples to avoid
+        detecting filter transients as real transitions.
+    penalty_factor : float
+        Scaling factor applied to the BIC penalty term.  Higher values
+        favour fewer change points; lower values allow more splits.
+        Default 1.5 gives a conservative split criterion.
+
+    Returns
+    -------
+    list[int]
+        Sorted list of change-point indices (left-exclusive boundaries).
+        An empty list means no significant change point was found.
+    """
+    change_points = pelt(signal.tolist(), penalty_factor, min_segment_samples)
     return change_points
 
 
