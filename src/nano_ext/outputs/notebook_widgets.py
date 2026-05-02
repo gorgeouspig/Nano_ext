@@ -69,7 +69,7 @@ def _hint(text: str) -> "ipywidgets.HTML":
 
 def make_plotly_figure(result) -> "plotly.graph_objects.Figure":
     """Build an interactive plotly figure from a PipelineResult."""
-    go, make_subplots = _require_plotly()
+    go, _ = _require_plotly()
 
     sr = result.signal_data.sampling_rate
     n = len(result.filtered_signal)
@@ -79,32 +79,25 @@ def make_plotly_figure(result) -> "plotly.graph_objects.Figure":
     threshold = result.threshold_result.threshold
     units = result.signal_data.units or "pA"
 
-    fig = make_subplots(
-        rows=2, cols=1,
-        shared_xaxes=True,
-        row_heights=[0.75, 0.25],
-        vertical_spacing=0.05,
-    )
+    fig = go.Figure()
 
     fig.add_trace(go.Scatter(
         x=t, y=result.filtered_signal,
         mode="lines", line=dict(color="#4C72B0", width=0.8),
         name="Filtered signal",
         hovertemplate="t=%{x:.3f} ms<br>I=%{y:.4f} " + units + "<extra></extra>",
-    ), row=1, col=1)
-
+    ))
     fig.add_trace(go.Scatter(
         x=t, y=baseline,
         mode="lines", line=dict(color="#DD8452", width=1.2, dash="dash"),
         name="Baseline",
         hovertemplate="t=%{x:.3f} ms<br>baseline=%{y:.4f} " + units + "<extra></extra>",
-    ), row=1, col=1)
-
+    ))
     fig.add_trace(go.Scatter(
         x=t, y=baseline + threshold,
         mode="lines", line=dict(color="#C44E52", width=1.0, dash="dot"),
         name="Threshold", hoverinfo="skip",
-    ), row=1, col=1)
+    ))
 
     from nano_ext.models import EventDirection
     if result.config.event_direction == EventDirection.BOTH:
@@ -112,39 +105,23 @@ def make_plotly_figure(result) -> "plotly.graph_objects.Figure":
             x=t, y=baseline - threshold,
             mode="lines", line=dict(color="#8172B2", width=1.0, dash="dot"),
             name="Threshold (up)", hoverinfo="skip",
-        ), row=1, col=1)
+        ))
 
     _add_event_traces(fig, result, t, units)
 
-    if result.events:
-        ev_t     = [ev.start_idx / sr * 1000 for ev in result.events]
-        ev_depth = [ev.depth for ev in result.events]
-        ev_dur   = [ev.duration * 1000 for ev in result.events]
-        ev_text  = [
-            f"#{i+1}<br>depth={d:.4f} {units}<br>dur={dur:.3f} ms"
-            for i, (d, dur) in enumerate(zip(ev_depth, ev_dur))
-        ]
-        fig.add_trace(go.Bar(
-            x=ev_t, y=ev_depth, width=ev_dur,
-            text=ev_text, hovertemplate="%{text}<extra></extra>",
-            marker_color="#4C72B0", name="Event depth", showlegend=False,
-        ), row=2, col=1)
-
     fig.update_layout(
-        height=600,
-        margin=dict(l=60, r=20, t=40, b=40),
+        height=500,
+        margin=dict(l=60, r=20, t=40, b=50),
         hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         template="plotly_white",
+        xaxis_title="Time (ms)",
+        yaxis_title=f"Current ({units})",
     )
-    fig.update_xaxes(title_text="Time (ms)", row=2, col=1)
-    fig.update_yaxes(title_text=f"Current ({units})", row=1, col=1)
-    fig.update_yaxes(title_text=f"Depth ({units})", row=2, col=1)
     return fig
 
 
 def _add_event_traces(fig, result, t, units):
-    go, _ = _require_plotly()
     sr = result.signal_data.sampling_rate
     for i, ev in enumerate(result.events):
         x0 = ev.start_idx / sr * 1000
@@ -152,7 +129,7 @@ def _add_event_traces(fig, result, t, units):
         color = "rgba(196,78,82,0.15)" if ev.direction.value == "down" else "rgba(129,114,178,0.15)"
         fig.add_vrect(
             x0=x0, x1=x1, fillcolor=color, opacity=1.0,
-            layer="below", line_width=0, row=1, col=1,
+            layer="below", line_width=0,
             annotation_text="" if len(result.events) > 50 else f"#{i+1}",
             annotation_position="top left", annotation_font_size=9,
         )
@@ -242,11 +219,28 @@ class NanoExtUI:
         self.w_event_direction = widgets.Dropdown(
             options=[("Down (blockade — current decreases)", "down"),
                      ("Up (anti-blockade — current increases)", "up"),
-                     ("Both", "both")],
+                     ("Both (advanced — see note below)", "both")],
             description="Direction:",
-            layout=widgets.Layout(width="380px"),
+            layout=widgets.Layout(width="400px"),
             style={"description_width": "80px"},
         )
+        self.w_direction_warning = widgets.HTML("")
+
+        def _on_direction(change):
+            if change["new"] == "both":
+                self.w_direction_warning.value = (
+                    "<div style='background:#fff8e1;border:1px solid #ffe082;"
+                    "border-radius:4px;padding:6px 10px;margin-top:4px;"
+                    "font-size:0.85em;color:#7a5c00'>"
+                    "⚠ <b>Both</b> applies the same threshold symmetrically in both directions. "
+                    "Because noise fluctuates in both directions equally, this typically causes "
+                    "many false positives in the direction opposite to your real events. "
+                    "Use only if you have confirmed that both blockade and anti-blockade events "
+                    "occur in this recording.</div>"
+                )
+            else:
+                self.w_direction_warning.value = ""
+        self.w_event_direction.observe(_on_direction, names="value")
         self.w_auto_tune = widgets.Checkbox(
             value=True,
             description="Auto-tune detection parameters",
@@ -257,6 +251,7 @@ class NanoExtUI:
             widgets.HTML("<h3 style='margin:0 0 6px'>2. Analysis Settings</h3>"),
             widgets.VBox([
                 self.w_event_direction,
+                self.w_direction_warning,
                 _hint("Choose 'Down' if molecules block the pore (most common). "
                       "Choose 'Up' if your signal increases during translocation."),
             ]),
