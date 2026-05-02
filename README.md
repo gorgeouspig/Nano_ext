@@ -2,6 +2,16 @@
 
 A Python-based toolkit (with Rust extensions) for extracting ionic current blockade events from high-sampling-rate (>100 kHz) nanopore traces. Nano_ext uses objective, information-criterion-based methods throughout — no manual threshold tuning required.
 
+## Screenshots
+
+### Interactive Jupyter UI
+
+![Jupyter UI](https://github.com/user-attachments/assets/49d7dd8b-0ee0-44c9-8c68-3b9974626eca)
+
+### Waveform Analysis
+
+![Waveform](https://github.com/user-attachments/assets/3930c3ae-69d2-402e-a63b-eb2265cb2874)
+
 ## Features
 
 - **Objective Thresholding**: Gaussian Mixture Models (GMM) + Bayesian Information Criterion (BIC) automatically determine the number of current levels and the optimal detection threshold.
@@ -23,8 +33,8 @@ Requires a Rust toolchain (`rustup`) because the package includes a compiled Rus
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/nano_ext.git
-cd nano_ext
+git clone https://github.com/gorgeouspig/Nano_ext.git
+cd Nano_ext
 
 # Create and activate a conda environment (recommended)
 conda create -n nano_ext python=3.10
@@ -36,16 +46,20 @@ pip install -e ".[dev]"
 
 ### From Pre-built Wheels
 
-Pre-built wheels for Linux, macOS, and Windows are provided in GitHub Releases. No Rust toolchain needed.
+Pre-built wheels for Linux, macOS, and Windows are provided in [GitHub Releases](https://github.com/gorgeouspig/Nano_ext/releases). No Rust toolchain needed.
 
 ```bash
-pip install nano_ext-0.1.0-cp310-cp310-linux_x86_64.whl
+pip install nano_ext-*.whl
 ```
 
 ### Interactive Jupyter UI (optional)
 
 ```bash
-pip install "nano_ext[notebook]"   # adds ipywidgets and plotly
+pip install "nano_ext[notebook]"
+
+# Register the environment as a Jupyter kernel (once per environment)
+python -m ipykernel install --user --name nano_ext --display-name "Python (nano_ext)"
+
 jupyter notebook notebooks/interactive_analysis.ipynb
 ```
 
@@ -60,7 +74,12 @@ conda activate nano_ext
 jupyter notebook notebooks/interactive_analysis.ipynb
 ```
 
-The UI guides you through five steps: file loading → filter settings → detection parameters → run → results with interactive waveform and CSV download.
+The UI guides you through four sections:
+
+1. **File Loading** — select signal and optional control files via a file browser
+2. **Analysis Settings** — choose event direction (Down / Up) and enable Auto-tune
+3. **Additional Settings** *(collapsed by default)* — preprocessing filters and advanced detection parameters, each with explanations
+4. **Run → Results** — interactive waveform with event shading, event table, and CSV download
 
 ### Command Line Interface
 
@@ -69,7 +88,7 @@ The UI guides you through five steps: file loading → filter settings → detec
 nano-ext analyze recording.abf -o ./results --auto-tune --plot
 
 # Specify detection direction (default: down)
-nano-ext analyze recording.abf -o ./results --event-direction both
+nano-ext analyze recording.abf -o ./results --event-direction up
 
 # Use a negative control trace for a cleaner noise estimate
 nano-ext analyze sample.abf -o ./results --control control.abf --auto-tune
@@ -185,7 +204,6 @@ The interactive plotly waveform (available in the Jupyter UI) shows:
 - Filtered signal with pan/zoom/scroll
 - Local baseline and threshold overlays
 - Per-event shading with hover tooltips (event index, depth, duration)
-- Event depth bar chart (lower panel)
 
 ## Testing
 
