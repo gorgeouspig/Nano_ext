@@ -32,7 +32,8 @@ def write_events_to_csv(events: List[Event], path: str, sampling_rate: float) ->
     Columns written: ``event_id``, ``start_idx``, ``end_idx``,
     ``start_time``, ``end_time``, ``duration``, ``mean_current``,
     ``std_current``, ``baseline_current``, ``depth``,
-    ``relative_depth``, ``area``, ``n_levels``, ``event_type``.
+    ``relative_depth``, ``area``, ``n_levels``, ``event_type``,
+    ``direction``.
     """
     data = []
     for ev_idx, ev in enumerate(events):
@@ -51,6 +52,7 @@ def write_events_to_csv(events: List[Event], path: str, sampling_rate: float) ->
             "area": ev.area,
             "n_levels": ev.n_levels,
             "event_type": ev.event_type.value,
+            "direction": ev.direction.value,
         })
     pd.DataFrame(data).to_csv(path, index=False)
 

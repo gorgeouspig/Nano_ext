@@ -3,6 +3,10 @@
 Threshold-based event detection with run-length encoding,
 minimum duration filtering, and nearby event merging.
 Also computes event statistics (depth, duration, area, etc.).
+
+For EventDirection.BOTH the function runs DOWN and UP detection
+independently with symmetric thresholds and returns a single list
+sorted by start_idx, with each event tagged by its direction.
 """
 
 from __future__ import annotations
@@ -23,6 +27,10 @@ def detect_events(
     min_event_duration_sec: Optional[float] = None,
     merge_gap_sec: Optional[float] = None,
     filter_cutoff: Optional[float] = None,
+    gmm_means: Optional[np.ndarray] = None,
+    gmm_stds: Optional[np.ndarray] = None,
+    gmm_weights: Optional[np.ndarray] = None,
+    baseline_component_idx: Optional[int] = None,
 ) -> list[Event]:
     """Detect events in a baseline-corrected signal.
 
@@ -33,83 +41,140 @@ def detect_events(
     sampling_rate : float
         Sampling rate in Hz.
     threshold : float
-        Threshold for event detection (from BIC-based determination).
-        For downward events, the threshold should be negative.
+        Threshold from BIC-based determination.  For downward events this
+        value is negative; for upward events the absolute value is used.
     baseline : np.ndarray
         Estimated absolute baseline (same length as residual), used
         for computing absolute current values in the output.
     direction : EventDirection
-        Direction of events to detect:
-        - DOWN: detect negative deviations (blockades)
-        - UP: detect positive deviations
-        - BOTH: detect both directions
+        Which current deviations to detect:
+        - DOWN: negative deviations (blockades)
+        - UP: positive deviations (anti-blockades / current spikes)
+        - BOTH: both directions; DOWN and UP events are detected
+          independently with symmetric thresholds and merged into a
+          single time-sorted list, each tagged with its direction.
     min_event_duration_sec : float, optional
-        Minimum event duration in seconds. Events shorter than this
-        are discarded as noise. If None, auto-determined from
+        Minimum event duration in seconds.  If None, auto-determined from
         filter_cutoff or sampling_rate.
     merge_gap_sec : float, optional
-        Maximum gap between events to merge them. If None,
+        Maximum gap between adjacent events to merge.  If None,
         auto-determined from filter_cutoff or sampling_rate.
     filter_cutoff : float, optional
-        Low-pass filter cutoff frequency (Hz). Used for auto-determining
-        min_event_duration and merge_gap if not specified.
+        Low-pass filter cutoff frequency (Hz).  Used for auto-determining
+        min_event_duration and merge_gap.
+    gmm_means : np.ndarray, optional
+        Component means from GMM threshold determination.
+    gmm_stds : np.ndarray, optional
+        Component standard deviations from GMM threshold determination.
+    gmm_weights : np.ndarray, optional
+        Component weights from GMM threshold determination.
+    baseline_component_idx : int, optional
+        Index of the baseline component in the GMM.
 
     Returns
     -------
     list[Event]
-        List of detected events with computed statistics.
+        Detected events sorted by start_idx.  Each event has its
+        ``direction`` field set to DOWN or UP.
     """
-    n_samples = len(residual)
-
-    # Auto-determine parameters
     if filter_cutoff is None:
         filter_cutoff = sampling_rate / 10.0
 
     if min_event_duration_sec is None:
-        # Minimum resolvable event ≈ 5 / filter_cutoff
         min_event_duration_sec = 5.0 / filter_cutoff
 
     if merge_gap_sec is None:
-        # Merge gap ≈ 3 / filter_cutoff
-        merge_gap_sec = 3.0 / filter_cutoff
+        merge_gap_sec = 1.5 / filter_cutoff
 
     min_samples = max(1, int(min_event_duration_sec * sampling_rate))
     merge_gap_samples = max(0, int(merge_gap_sec * sampling_rate))
 
-    # --- Create event mask based on direction ---
+    # GMM-derived open-pore statistics (used for conservative thresholding)
+    gmm_params_ok = (
+        gmm_means is not None
+        and gmm_stds is not None
+        and gmm_weights is not None
+        and baseline_component_idx is not None
+    )
+    if gmm_params_ok:
+        open_pore_mean = gmm_means[baseline_component_idx]
+        open_pore_std = gmm_stds[baseline_component_idx]
+    else:
+        open_pore_mean = 0.0
+        open_pore_std = 0.0
+
+    def _down_threshold() -> float:
+        if gmm_params_ok:
+            return min(threshold, open_pore_mean - 5.0 * open_pore_std)
+        return threshold
+
+    def _up_threshold() -> float:
+        if gmm_params_ok:
+            return max(abs(threshold), open_pore_mean + 5.0 * open_pore_std)
+        return abs(threshold)
+
+    if direction == EventDirection.BOTH:
+        down_events = _detect_one_direction(
+            residual, baseline, sampling_rate,
+            _down_threshold(), EventDirection.DOWN,
+            open_pore_mean, open_pore_std, gmm_params_ok,
+            min_samples, merge_gap_samples,
+        )
+        up_events = _detect_one_direction(
+            residual, baseline, sampling_rate,
+            _up_threshold(), EventDirection.UP,
+            open_pore_mean, open_pore_std, gmm_params_ok,
+            min_samples, merge_gap_samples,
+        )
+        return sorted(down_events + up_events, key=lambda e: e.start_idx)
+
+    eff_threshold = _down_threshold() if direction == EventDirection.DOWN else _up_threshold()
+    return _detect_one_direction(
+        residual, baseline, sampling_rate,
+        eff_threshold, direction,
+        open_pore_mean, open_pore_std, gmm_params_ok,
+        min_samples, merge_gap_samples,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _detect_one_direction(
+    residual: np.ndarray,
+    baseline: np.ndarray,
+    sampling_rate: float,
+    threshold: float,
+    direction: EventDirection,
+    open_pore_mean: float,
+    open_pore_std: float,
+    use_gmm: bool,
+    min_samples: int,
+    merge_gap_samples: int,
+) -> list[Event]:
+    """Run detection for a single direction and return tagged events."""
     if direction == EventDirection.DOWN:
         event_mask = residual < threshold
-    elif direction == EventDirection.UP:
-        event_mask = residual > abs(threshold)
-    elif direction == EventDirection.BOTH:
-        event_mask = np.abs(residual) > abs(threshold)
     else:
-        raise ValueError(f"Unknown direction: {direction}")
+        event_mask = residual > threshold
 
-    # --- Extract contiguous runs (run-length encoding) ---
+    if use_gmm and open_pore_std > 0:
+        # Exclude samples within 1σ of the open-pore mean from being flagged
+        open_pore_mask = np.abs(residual - open_pore_mean) < open_pore_std
+        event_mask = event_mask & ~open_pore_mask
+
     raw_intervals = _find_runs(event_mask)
-
-    if len(raw_intervals) == 0:
+    if not raw_intervals:
         return []
 
-    # --- Merge nearby events ---
     merged = _merge_intervals(raw_intervals, merge_gap_samples)
+    filtered = [(s, e) for s, e in merged if (e - s) >= min_samples]
 
-    # --- Filter by minimum duration ---
-    filtered_intervals = [
-        (start, end) for start, end in merged
-        if (end - start) >= min_samples
+    return [
+        _compute_event_stats(residual, baseline, sampling_rate, s, e, direction)
+        for s, e in filtered
     ]
-
-    # --- Compute statistics for each event ---
-    events = []
-    for start_idx, end_idx in filtered_intervals:
-        event = _compute_event_stats(
-            residual, baseline, sampling_rate, start_idx, end_idx
-        )
-        events.append(event)
-
-    return events
 
 
 def _find_runs(mask: np.ndarray) -> list[tuple[int, int]]:
@@ -128,12 +193,10 @@ def _find_runs(mask: np.ndarray) -> list[tuple[int, int]]:
     if len(mask) == 0:
         return []
 
-    # Find transitions
     diff = np.diff(mask.astype(np.int8))
     starts = np.where(diff == 1)[0] + 1
     ends = np.where(diff == -1)[0] + 1
 
-    # Handle edge cases
     if mask[0]:
         starts = np.concatenate([[0], starts])
     if mask[-1]:
@@ -167,7 +230,6 @@ def _merge_intervals(
     for start, end in intervals[1:]:
         prev_start, prev_end = merged[-1]
         if start - prev_end <= max_gap:
-            # Merge with previous
             merged[-1] = (prev_start, max(prev_end, end))
         else:
             merged.append((start, end))
@@ -181,6 +243,7 @@ def _compute_event_stats(
     sampling_rate: float,
     start_idx: int,
     end_idx: int,
+    direction: EventDirection = EventDirection.DOWN,
 ) -> Event:
     """Compute statistics for a single event.
 
@@ -196,11 +259,13 @@ def _compute_event_stats(
         Start index of the event.
     end_idx : int
         End index of the event (exclusive).
+    direction : EventDirection
+        Direction of the event (DOWN or UP).
 
     Returns
     -------
     Event
-        Event with computed statistics.
+        Event with computed statistics and direction tag.
     """
     event_residual = residual[start_idx:end_idx]
     event_baseline = baseline[start_idx:end_idx]
@@ -211,23 +276,16 @@ def _compute_event_stats(
 
     mean_residual = float(np.mean(event_residual))
     std_current = float(np.std(event_residual))
-
-    # Absolute current during event
     mean_current = float(np.mean(event_baseline + event_residual))
-
-    # Baseline current (average of local baseline during event)
     baseline_current = float(np.mean(event_baseline))
 
-    # Depth = how far current dropped from baseline (positive value)
     depth = abs(mean_residual)
 
-    # Relative depth
     if abs(baseline_current) > 1e-10:
         relative_depth = depth / abs(baseline_current)
     else:
         relative_depth = 0.0
 
-    # Area = integral of deviation from baseline (in pA * seconds)
     area = float(np.sum(np.abs(event_residual))) / sampling_rate
 
     return Event(
@@ -245,4 +303,5 @@ def _compute_event_stats(
         n_levels=1,
         sublevels=[],
         event_type=EventType.SINGLE,
+        direction=direction,
     )

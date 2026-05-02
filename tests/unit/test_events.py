@@ -200,3 +200,95 @@ class TestDetectEvents:
             merge_gap_sec=0.01,
         )
         assert len(events) == 2
+
+    def test_down_event_tagged_with_down_direction(self):
+        n = 10_000
+        rng = np.random.default_rng(10)
+        residual = rng.normal(0.0, 0.5, n)
+        residual[3_000:5_000] += -50.0
+        baseline = np.zeros(n)
+        events = detect_events(
+            residual=residual,
+            sampling_rate=SR,
+            threshold=-10.0,
+            baseline=baseline,
+            direction=EventDirection.DOWN,
+            min_event_duration_sec=0.05,
+        )
+        assert len(events) == 1
+        assert events[0].direction == EventDirection.DOWN
+
+    def test_up_event_tagged_with_up_direction(self):
+        n = 10_000
+        rng = np.random.default_rng(11)
+        residual = rng.normal(0.0, 0.5, n)
+        residual[3_000:5_000] += 50.0
+        baseline = np.zeros(n)
+        events = detect_events(
+            residual=residual,
+            sampling_rate=SR,
+            threshold=-10.0,
+            baseline=baseline,
+            direction=EventDirection.UP,
+            min_event_duration_sec=0.05,
+        )
+        assert len(events) == 1
+        assert events[0].direction == EventDirection.UP
+
+    def test_both_direction_detects_down_and_up(self):
+        n = 30_000
+        rng = np.random.default_rng(12)
+        residual = rng.normal(0.0, 0.5, n)
+        residual[3_000:5_000] += -50.0   # blockade
+        residual[18_000:20_000] += 50.0  # anti-blockade
+        baseline = np.zeros(n)
+        events = detect_events(
+            residual=residual,
+            sampling_rate=SR,
+            threshold=-10.0,
+            baseline=baseline,
+            direction=EventDirection.BOTH,
+            min_event_duration_sec=0.05,
+        )
+        assert len(events) == 2
+        directions = {ev.direction for ev in events}
+        assert EventDirection.DOWN in directions
+        assert EventDirection.UP in directions
+
+    def test_both_direction_sorted_by_time(self):
+        n = 30_000
+        rng = np.random.default_rng(13)
+        residual = rng.normal(0.0, 0.5, n)
+        residual[5_000:7_000] += 50.0   # UP event comes first in time
+        residual[20_000:22_000] += -50.0  # DOWN event comes second
+        baseline = np.zeros(n)
+        events = detect_events(
+            residual=residual,
+            sampling_rate=SR,
+            threshold=-10.0,
+            baseline=baseline,
+            direction=EventDirection.BOTH,
+            min_event_duration_sec=0.05,
+        )
+        assert len(events) == 2
+        assert events[0].start_idx < events[1].start_idx
+        assert events[0].direction == EventDirection.UP
+        assert events[1].direction == EventDirection.DOWN
+
+    def test_both_direction_down_only_signal(self):
+        """BOTH mode on a signal with only downward events: no UP events returned."""
+        n = 20_000
+        rng = np.random.default_rng(14)
+        residual = rng.normal(0.0, 0.5, n)
+        residual[5_000:7_000] += -50.0
+        baseline = np.zeros(n)
+        events = detect_events(
+            residual=residual,
+            sampling_rate=SR,
+            threshold=-10.0,
+            baseline=baseline,
+            direction=EventDirection.BOTH,
+            min_event_duration_sec=0.05,
+        )
+        assert len(events) == 1
+        assert events[0].direction == EventDirection.DOWN

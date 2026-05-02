@@ -134,6 +134,9 @@ class Event:
         List of sub-levels (empty for single-level events).
     event_type : EventType
         Classification of the event (SINGLE, MULTI_LEVEL, or SPIKE).
+    direction : EventDirection
+        Direction of the current change: DOWN (blockade) or UP (anti-blockade /
+        current enhancement). Always DOWN unless detected with EventDirection.BOTH.
     """
 
     start_idx: int
@@ -150,6 +153,7 @@ class Event:
     n_levels: int = 1
     sublevels: list[SubLevel] = field(default_factory=list)
     event_type: EventType = EventType.SINGLE
+    direction: EventDirection = EventDirection.DOWN
 
     @property
     def is_multilevel(self) -> bool:
