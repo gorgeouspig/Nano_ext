@@ -31,6 +31,7 @@ dev = [
 notebook = [
     "ipywidgets>=8.0",
     "plotly>=5.0",
+    "ipykernel>=6.0",
 ]
 
 [project.scripts]
