@@ -10,7 +10,9 @@ This document summarizes the requirements and development roadmap for the `Nano_
 4. **Run slow tests before committing**: `pytest -m slow` (takes several minutes; covers GMM and Rust baseline)
 5. **Commit**: Stage your changes and commit to `main`
 
-**Current next task → Phase 5 完了 / 次のフェーズは未定義** (see Section 4)
+**Current next task → Phase 5 完了 / Phase 6 未定義** (see Section 4)
+
+> Performance fix committed 2026-05-02: O(n) baseline smoothing (Rust prefix-sum), numpy zero-copy arrays, `gmm_max_samples` cap → real 250 kHz / 10 s signal processes in 28 s end-to-end.
 
 ## 1. Project Overview
 
@@ -194,6 +196,33 @@ Adopt this as a **Phase 4 feature** (not blocking the current MVP). Start with t
 - **再実行しない設計**: ウィジェット変更のたびにパイプラインを再実行しない。「Run Analysis」ボタンを1回押したときだけ `run_pipeline` を呼ぶ。結果表示の更新のみはボタンなしで即応してよい（例: イベントテーブルのフィルタリング）。
 - **エラーハンドリング**: ファイルが見つからない、sampling_rateが未指定などのエラーはウィジェット上に赤字で表示する（例外をノートブック外に出さない）。
 - **ノートブックの自己完結性**: ノートブックを開いてセルを上から実行するだけで動くこと。環境構築手順を冒頭セルのMarkdownに記載する。
+
+### Phase 5 Post-Work: Performance Fixes & Real-Data Validation (Completed 2026-05-02)
+
+These items were discovered and fixed during real-data analysis after Phase 5 shipped.
+
+1. ✅ **O(n×window) Rust smoothing bottleneck**: The sliding-mean at the end of `local_baseline_percentile` was a nested loop. Replaced with an O(n) prefix-sum → baseline step: 331 s → 8.25 s (40×) on a 2.5 M-sample 10 s recording.
+2. ✅ **Python `.tolist()` overhead**: `baseline.py` was calling `.tolist()` before passing to Rust, causing element-by-element PyO3 conversion. Added `numpy = "0.27"` crate (`PyReadonlyArray1`) for zero-copy array access. Further reduced to 5.54 s.
+3. ✅ **GMM hanging on large signals**: No sample cap meant GMM fitting on 500k–2.5M samples took 100–300 s. Added `gmm_max_samples = 100_000` to `DetectionConfig` (exposed as `--gmm-max-samples` in CLI). GMM step now caps at 20 s.
+4. ✅ **Circular import**: `preprocessing/baseline.py` was importing `local_baseline_percentile` from `nano_ext` (top-level `__init__`). Changed to `from nano_ext._nano_ext import local_baseline_percentile`.
+
+**Real data validation results** (`examples/signal/2024_11_29_0016_f32.bin`, 250 kHz, 10 s, EventDirection.UP):
+- Control noise floor: 13.06 pA (from `examples/cont/2024_11_29_0013.abf`); SNR ≈ 50
+- GMM: k=1, threshold ≈ +84 pA (3σ above baseline)
+- Final analysis (min_dur = 0.04 ms): **2 events** detected
+  - Event 1: t = 5.1575 s, dur = 0.160 ms, depth = 676.7 pA
+  - Event 2: t = 8.4663 s, dur = 0.164 ms, depth = 650.7 pA
+  - No sub-levels found
+- min_duration sweep summary:
+
+  | min_dur | events | notes |
+  |---------|--------|-------|
+  | 0.120 ms | 2 | clean large events only |
+  | 0.050 ms | 3 | one intermediate event added |
+  | 0.020 ms | 6 | small spikes start appearing |
+  | 0.010 ms | 364 | noise-dominated |
+
+- Total pipeline time: 28.1 s for 10 s signal (2.8× real-time)
 
 ## 5. Technical Details (Algorithms)
 
