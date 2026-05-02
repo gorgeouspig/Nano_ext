@@ -36,8 +36,9 @@ example_output/
 *.tsv
 !tests/expected_*.csv
 
-# Claude Code
-CLAUDE.md
+# Internal docs (keep only README.md public)
+*.md
+!README.md
 
 # Rust (future)
 target/
