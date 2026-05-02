@@ -10,7 +10,7 @@ This document summarizes the requirements and development roadmap for the `Nano_
 4. **Run slow tests before committing**: `pytest -m slow` (takes several minutes; covers GMM and Rust baseline)
 5. **Commit**: Stage your changes and commit to `main`
 
-**Current next task → Phase 5** (see Section 4 — all Phase 4 items complete)
+**Current next task → Phase 5 完了 / 次のフェーズは未定義** (see Section 4)
 
 ## 1. Project Overview
 
@@ -128,6 +128,72 @@ A control trace eliminates both issues by providing a direct, event-free referen
 
 ### Recommendation
 Adopt this as a **Phase 4 feature** (not blocking the current MVP). Start with the simplest integration — using control noise std as a sanity check / fallback threshold — before layering on GMM priors and FPR-tuned threshold calibration.
+
+### Phase 5: Jupyter Interactive Interface (Planned)
+
+#### Goals
+生物系研究者がターミナルなしで解析を行えるインタラクティブなJupyterノートブックを提供する。CLIは残したまま、Jupyterを追加の入り口として位置づける。
+
+#### 技術選定
+
+| 役割 | ライブラリ | 理由 |
+|---|---|---|
+| UIウィジェット | `ipywidgets` | Jupyter標準、軽量 |
+| インタラクティブ可視化 | `plotly` | 波形スクロール・拡大が可能 |
+| ノートブック | `notebooks/interactive_analysis.ipynb` | 解析の記録にもなる |
+
+`plotly` と `ipywidgets` は `pyproject.toml` の `[notebook]` optional groupに追加する（`pip install "nano_ext[notebook]"`）。コア依存には含めない。
+
+#### UIレイアウト（ノートブックのセル構成）
+
+```
+┌─────────────────────────────────────────┐
+│ Section 1: ファイル読み込み              │
+│   filepath テキスト入力                  │
+│   channel セレクタ (0/1/2...)            │
+│   format セレクタ (auto / abf / binary)  │
+│   sampling_rate 入力 (binary用)          │
+│   [Load] ボタン → 信号情報を表示        │
+├─────────────────────────────────────────┤
+│ Section 2: 前処理パラメータ             │
+│   フィルタ ON/OFF トグル                │
+│   filter_cutoff スライダー              │
+│   auto-tune トグル (ONでSection3を無効化)│
+├─────────────────────────────────────────┤
+│ Section 3: 検出パラメータ               │
+│   event_direction セレクタ (down/up/both)│
+│   baseline_window_sec スライダー        │
+│   min_event_duration_sec スライダー     │
+│   gmm_max_components スライダー         │
+│   [optional] control file パス入力      │
+├─────────────────────────────────────────┤
+│ Section 4: 実行                         │
+│   [Run Analysis] ボタン                 │
+│   プログレス表示 (出力ログ)             │
+├─────────────────────────────────────────┤
+│ Section 5: 結果                         │
+│   サマリーテキスト                      │
+│   plotly インタラクティブ波形           │
+│     (生信号 / フィルタ後 / ベースライン  │
+│      / 閾値 / イベントマーカー)          │
+│   イベントテーブル (pandas DataFrame)   │
+│   [Download CSV] ボタン                 │
+└─────────────────────────────────────────┘
+```
+
+#### 実装タスク
+
+1.  ✅ **依存関係追加**: `pyproject.toml` に `[notebook]` optional group を追加 (`ipywidgets>=8.0`, `plotly>=5.0`)。conda環境にインストール済み。
+2.  ✅ **ウィジェットヘルパーモジュール**: `src/nano_ext/outputs/notebook_widgets.py` を作成。`NanoExtUI` クラスに5セクションのUI全体を実装。lazy importで`[notebook]`なし環境でもコアライブラリはインポート可能。
+3.  ✅ **ノートブック作成**: `notebooks/interactive_analysis.ipynb` を作成。UI起動は2セル（確認セル + `NanoExtUI().display()`）。後続セルでDataFrame取得・ヒストグラム描画のカスタム処理例を提供。
+4.  ✅ **plotly可視化**: `make_plotly_figure(result)` を実装。2段構成（上: 波形+ベースライン+閾値+イベントシェーディング、下: イベント深さのバーチャート）。ホバーでイベント番号・深さ・持続時間を表示。BOTH方向時は上下両閾値を表示。
+5.  ✅ **CSVダウンロード**: `Download CSV` ボタンをBase64エンコードのdata URIとして実装。ブラウザから直接ダウンロード可能。
+6.  ✅ **動作確認**: 合成データで `make_plotly_figure` と `NanoExtUI._run_pipeline` の動作を確認。全86テスト通過。
+
+#### 設計上の注意点
+- **再実行しない設計**: ウィジェット変更のたびにパイプラインを再実行しない。「Run Analysis」ボタンを1回押したときだけ `run_pipeline` を呼ぶ。結果表示の更新のみはボタンなしで即応してよい（例: イベントテーブルのフィルタリング）。
+- **エラーハンドリング**: ファイルが見つからない、sampling_rateが未指定などのエラーはウィジェット上に赤字で表示する（例外をノートブック外に出さない）。
+- **ノートブックの自己完結性**: ノートブックを開いてセルを上から実行するだけで動くこと。環境構築手順を冒頭セルのMarkdownに記載する。
 
 ## 5. Technical Details (Algorithms)
 
