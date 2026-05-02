@@ -33,6 +33,7 @@ notebook = [
     "plotly>=5.0",
     "ipykernel>=6.0",
     "ipyfilechooser>=0.6",
+    "nbformat>=4.2.0",
 ]
 
 [project.scripts]
