@@ -16,7 +16,7 @@ from scipy.interpolate import UnivariateSpline
 from scipy.ndimage import uniform_filter1d
 
 from nano_ext.models import BaselineResult
-from nano_ext import local_baseline_percentile
+from nano_ext._nano_ext import local_baseline_percentile
 
 logger = logging.getLogger(__name__)
 

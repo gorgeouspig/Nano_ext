@@ -144,6 +144,18 @@ def main(verbose):
     help="Maximum recursion depth for sub-level analysis.",
 )
 @click.option(
+    "--auto-tune",
+    is_flag=True,
+    help="Auto-tune min_event_duration and merge_gap from signal noise characteristics.",
+)
+@click.option(
+    "--control",
+    "control_path",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="Path to a negative control (analyte-free) file for noise characterisation.",
+)
+@click.option(
     "--plot",
     is_flag=True,
     help="Generate and save a plot of the analysis result.",
@@ -170,6 +182,8 @@ def analyze(
     gmm_max_components,
     bic_criterion,
     max_sublevel_depth,
+    auto_tune,
+    control_path,
     plot,
 ):
     """Analyze a nanopore data file to detect events."""
@@ -177,22 +191,52 @@ def analyze(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    config = DetectionConfig(
-        apply_filter=not no_filter,
-        pre_applied_filter_cutoff=pre_filter_cutoff,
-        detrend_method=detrend_method,
-        detrend_order=detrend_order,
-        baseline_window_sec=baseline_window_sec,
-        baseline_iterations=baseline_iterations,
-        baseline_percentile=baseline_percentile,
-        baseline_n_sigma=baseline_n_sigma,
-        event_direction=EventDirection(event_direction),
-        min_event_duration_sec=min_event_duration_sec,
-        merge_gap_sec=merge_gap_sec,
-        gmm_max_components=gmm_max_components,
-        bic_criterion=bic_criterion,
-        max_sublevel_depth=max_sublevel_depth,
-    )
+    if auto_tune:
+        # Load signal first to derive noise-aware defaults, then apply CLI overrides
+        from nano_ext.detection.autotune import suggest_config
+        if file_format == "abf" or (file_format is None and filepath.suffix.lower() == ".abf"):
+            from nano_ext.io.abf_reader import read_abf
+            _signal_data = read_abf(str(filepath), channel=channel)
+        else:
+            if sampling_rate is None:
+                raise click.UsageError("--sampling-rate is required for binary files with --auto-tune.")
+            from nano_ext.io.binary_reader import read_binary
+            _signal_data = read_binary(str(filepath), sampling_rate=sampling_rate, dtype=dtype)
+        config = suggest_config(
+            _signal_data,
+            apply_filter=not no_filter,
+            pre_applied_filter_cutoff=pre_filter_cutoff,
+            detrend_method=detrend_method,
+            detrend_order=detrend_order,
+            baseline_window_sec=baseline_window_sec,
+            baseline_iterations=baseline_iterations,
+            baseline_percentile=baseline_percentile,
+            baseline_n_sigma=baseline_n_sigma,
+            event_direction=EventDirection(event_direction),
+            min_event_duration_sec=min_event_duration_sec,
+            merge_gap_sec=merge_gap_sec,
+            gmm_max_components=gmm_max_components,
+            bic_criterion=bic_criterion,
+            max_sublevel_depth=max_sublevel_depth,
+        )
+        click.echo("Auto-tune enabled: noise-aware defaults applied.")
+    else:
+        config = DetectionConfig(
+            apply_filter=not no_filter,
+            pre_applied_filter_cutoff=pre_filter_cutoff,
+            detrend_method=detrend_method,
+            detrend_order=detrend_order,
+            baseline_window_sec=baseline_window_sec,
+            baseline_iterations=baseline_iterations,
+            baseline_percentile=baseline_percentile,
+            baseline_n_sigma=baseline_n_sigma,
+            event_direction=EventDirection(event_direction),
+            min_event_duration_sec=min_event_duration_sec,
+            merge_gap_sec=merge_gap_sec,
+            gmm_max_components=gmm_max_components,
+            bic_criterion=bic_criterion,
+            max_sublevel_depth=max_sublevel_depth,
+        )
 
     click.echo(f"Analyzing {filepath.name}...")
     try:
@@ -205,6 +249,7 @@ def analyze(
             dtype=dtype,
             analyze_sublevel=not no_sublevel_analysis,
             verbose=True,
+            control_path=control_path,
         )
         click.echo(result.summary())
 

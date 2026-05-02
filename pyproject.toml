@@ -45,4 +45,7 @@ include = ["nano_ext*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short -m 'not slow'"
+markers = [
+    "slow: tests involving GMM fitting or large Rust baseline calls (run with -m slow)",
+]

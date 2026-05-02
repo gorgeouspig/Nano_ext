@@ -4,12 +4,12 @@ A Python-based toolkit (with Rust extensions) designed to extract events (blocka
 
 ## Features
 
-- **Objective Thresholding**: Uses Gaussian Mixture Models (GMM) and Bayesian Information Criterion (BIC) to automatically determine the number of current levels and optimal detection thresholds.
+- **Objective Thresholding**: Uses Gaussian Mixture Models (GMM) and Bayesian Information Criterion (BIC) to automatically determine the number of current levels and optimal detection thresholds — no manual threshold setting required.
+- **Objective Sub-level Analysis**: Applies the same GMM + BIC approach within each detected event to determine the number of sub-levels without any user-tuned parameters.
 - **Drift Handling**: Robustly handles baseline drift (gradual shifts in open-channel current) using iterative local estimation.
-- **Sub-level Analysis**: Recursively decomposes complex events into multiple sub-steps using change-point detection (PELT algorithm) and BIC.
 - **High Performance**: Uses Rust (PyO3/maturin) to accelerate bottleneck computations for large datasets.
 - **Flexible Input**: Supports Axon Binary Format (ABF) and raw binary data.
-- **Comprehensive Output**: Provides CSV/TSV summaries and visualization plots.
+- **Comprehensive Output**: Provides per-event and per-sub-level CSV summaries and visualization plots.
 
 ## Installation
 
@@ -54,8 +54,9 @@ nano-ext path/to/input.abf -o ./analysis_results
 ```
 
 The tool will generate:
-1. `[input_filename]_events.csv`: A summary of detected events.
-2. `[input_filename]_analysis.png`: (If `--plot` is used) A visualization plot.
+1. `[input_filename]_events.csv`: A summary of detected events (one row per event).
+2. `[input_filename]_sublevels.csv`: Sub-level details for multi-level events (one row per sub-level, joined to events via `event_id`).
+3. `[input_filename]_analysis.png`: (If `--plot` is used) A visualization plot.
 
 #### Handling Pre-Filtered Data
 If your data is already low-pass filtered, you can disable the built-in filtering to avoid phase distortion and provide the known cutoff frequency to ensure accurate event detection parameters.
@@ -154,10 +155,10 @@ print(result.summary())
 - Baseline current and event statistics calculation
 
 ### 4. Sub-level Analysis (Optional)
-- For each detected event, apply Pruned Exact Linear Time (PELT) algorithm
-- Uses Gaussian negative log-likelihood as cost function
-- BIC-based decision to accept/reject change points
-- Recursive decomposition until no further improvement
+- Filter transients at event edges are removed before analysis (trimming ≈ 2 / filter_cutoff seconds per side), preventing the low-pass filter's finite rise time from being misidentified as a current step
+- Apply GMM + BIC within each event to objectively determine the number of distinct current levels — the same information-theoretic approach used for global thresholding, with no user-tuned sigma thresholds
+- Hard-assignment of samples to GMM components determines temporal structure; physically unresolvable short segments are absorbed into their nearest neighbour
+- Results are written to a separate `sublevels.csv` keyed by `event_id`, with per-sub-level depth and relative depth from baseline
 
 ## Visualization
 

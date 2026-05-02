@@ -106,6 +106,7 @@ def run_pipeline(
     config: Optional[DetectionConfig] = None,
     analyze_sublevel: bool = True,
     verbose: bool = False,
+    control_signal: Optional[SignalData] = None,
 ) -> PipelineResult:
     """Run the full event detection pipeline.
 
@@ -119,6 +120,11 @@ def run_pipeline(
         Whether to perform sub-level analysis on detected events.
     verbose : bool
         If True, log progress messages.
+    control_signal : SignalData, optional
+        Analyte-free (negative control) recording.  When provided, its
+        noise standard deviation replaces the sample-derived estimate,
+        giving a cleaner noise floor when the sample is event-dense.
+        The control must have the same sampling rate as *signal_data*.
 
     Returns
     -------
@@ -171,7 +177,28 @@ def run_pipeline(
         noise_estimation=config.noise_estimation,
     )
     if verbose:
-        logger.info(f"  Noise std: {bl_result.noise_std:.4f}")
+        logger.info(f"  Noise std (sample): {bl_result.noise_std:.4f}")
+
+    # ---- Step 2b: Override noise estimate from control (if provided) ----
+    if control_signal is not None:
+        if control_signal.sampling_rate != sr:
+            logger.warning(
+                f"Control sampling rate ({control_signal.sampling_rate} Hz) differs "
+                f"from sample ({sr} Hz). Control noise estimate may be unreliable."
+            )
+        from nano_ext.preprocessing.control import compute_control_stats
+        ctrl_stats = compute_control_stats(control_signal, config)
+        if verbose:
+            logger.info(
+                f"  Noise std (control): {ctrl_stats.noise_std:.4f} "
+                f"→ overrides sample estimate"
+            )
+        bl_result = BaselineResult(
+            local_baseline=bl_result.local_baseline,
+            trend=bl_result.trend,
+            residual=bl_result.residual,
+            noise_std=ctrl_stats.noise_std,
+        )
 
     # ---- Step 3: Threshold determination ----
     if verbose:
@@ -254,6 +281,7 @@ def process_file(
     dtype: str = "float32",
     analyze_sublevel: bool = True,
     verbose: bool = False,
+    control_path: Optional[Union[str, Path]] = None,
 ) -> PipelineResult:
     """Load a file and run the full pipeline.
 
@@ -276,6 +304,10 @@ def process_file(
         Whether to perform sub-level analysis.
     verbose : bool
         If True, log progress.
+    control_path : str or Path, optional
+        Path to a negative control file (same format as *filepath*).
+        When provided, the control's noise estimate is used to stabilise
+        threshold determination.
 
     Returns
     -------
@@ -312,9 +344,31 @@ def process_file(
     if verbose:
         logger.info(f"Loaded {filepath.name}: {signal_data.n_samples} samples @ {signal_data.sampling_rate} Hz")
 
+    # Load control signal if path is provided
+    control_signal: Optional[SignalData] = None
+    if control_path is not None:
+        control_path = Path(control_path)
+        ctrl_format = "abf" if control_path.suffix.lower() == ".abf" else "binary"
+        if ctrl_format == "abf":
+            from nano_ext.io.abf_reader import read_abf
+            control_signal = read_abf(str(control_path), channel=channel)
+        else:
+            if sampling_rate is None:
+                raise ValueError("sampling_rate is required for binary control files.")
+            from nano_ext.io.binary_reader import read_binary
+            control_signal = read_binary(
+                str(control_path), sampling_rate=sampling_rate, dtype=dtype
+            )
+        if verbose:
+            logger.info(
+                f"Loaded control {control_path.name}: "
+                f"{control_signal.n_samples} samples @ {control_signal.sampling_rate} Hz"
+            )
+
     return run_pipeline(
         signal_data=signal_data,
         config=config,
         analyze_sublevel=analyze_sublevel,
         verbose=verbose,
+        control_signal=control_signal,
     )

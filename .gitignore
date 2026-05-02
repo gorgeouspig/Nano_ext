@@ -31,9 +31,13 @@ Thumbs.db
 # Output
 !src/nano_ext.outputs/
 output/
+example_output/
 *.csv
 *.tsv
 !tests/expected_*.csv
+
+# Claude Code
+CLAUDE.md
 
 # Rust (future)
 target/

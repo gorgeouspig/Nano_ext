@@ -28,7 +28,7 @@ def lowpass_filter(
     """Apply a low-pass filter to the signal.
 
     Uses zero-phase (forward-backward) filtering via sosfiltfilt
-    to avoid phase distortion.
+    to avoid phase distortion. Applies symmetric padding to reduce edge effects.
 
     Parameters
     ----------
@@ -81,7 +81,29 @@ def lowpass_filter(
             "Use 'bessel' or 'butterworth'."
         )
 
-    filtered = sosfiltfilt(sos, signal)
+    # --- Padding to reduce edge effects ---
+    # Pad with 0.1 seconds of signal (reflected) on each side, but not more than half the signal
+    pad_duration_sec = 0.1  # seconds
+    pad_samples = int(pad_duration_sec * sampling_rate)
+    # Limit padding to avoid excessive padding on very short signals
+    max_pad = len(signal) // 2
+    if pad_samples > max_pad:
+        pad_samples = max_pad
+    if pad_samples > 0:
+        # Use reflection padding at the edges
+        padded_signal = np.pad(signal, (pad_samples, pad_samples), mode='reflect')
+    else:
+        padded_signal = signal
+
+    # Apply zero-phase filtering
+    filtered_padded = sosfiltfilt(sos, padded_signal)
+
+    # Remove padding
+    if pad_samples > 0:
+        filtered = filtered_padded[pad_samples:-pad_samples]
+    else:
+        filtered = filtered_padded
+
     return filtered
 
 

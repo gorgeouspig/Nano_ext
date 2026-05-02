@@ -10,7 +10,7 @@ This document summarizes the requirements and development roadmap for the `Nano_
 4. **Run slow tests before committing**: `pytest -m slow` (takes several minutes; covers GMM and Rust baseline)
 5. **Commit**: Stage your changes and commit to `main`
 
-**Current next task → Phase 4 item 3: Automated Parameter Tuning** (see Section 4)
+**Current next task → Phase 5** (see Section 4 — all Phase 4 items complete)
 
 ## 1. Project Overview
 
@@ -88,11 +88,11 @@ The project is functional end-to-end with both Python and Rust components in pla
     - `local_baseline_percentile` has a **performance cliff at n=500,000**: the direct path (n≤500k) is O(n×window), so a 500k-sample signal with window=5001 takes ~94s; the subsampled path (n>500k) takes only ~1.9s (50× faster). This means short recordings (<5s at 100kHz) with large windows are slow.
     - **✅ Fixed (Phase 4)**: changed both Rust and Python paths to a product-based threshold (`n × window > 10M` instead of `n > 500k`). Also fixed an O(n × sparse) linear-search interpolation loop to O(1) using evenly-spaced index arithmetic. New timings: n=100k/window=5001 → **67 ms** (was 19 s); n=500k/window=5001 → **360 ms** (was 94 s).
 
-### Phase 4: Advanced Analysis & Validation (In Progress)
+### Phase 4: Advanced Analysis & Validation (Completed)
 1.  ✅ **Baseline Performance Cliff Fix**: Changed subsampling threshold from `n > 500k` to `n × window > 10M` in both Rust and Python paths; fixed O(n × sparse) interpolation to O(1). Result: ~260× speedup for short recordings with large windows.
 2.  ✅ **Multi-directional Detection**: `EventDirection.BOTH` now runs DOWN and UP detection independently with symmetric thresholds, merges results sorted by time, and tags each `Event` with its `direction` field (`EventDirection.DOWN` or `EventDirection.UP`). CSV output includes the new `direction` column. 5 new unit tests added.
-3.  🔲 **Automated Parameter Tuning**: Use noise characteristics to automatically set `min_duration` and `merge_gap`.
-4.  🔲 **Negative Control Integration**: Use solvent-only control traces to characterize baseline noise (see Section 6).
+3.  ✅ **Automated Parameter Tuning**: `detection/autotune.py` — `estimate_noise_floor()` (MAD of first-differences) and `suggest_config()` (noise-aware `min_duration`, `merge_gap`, `baseline_window_sec`). CLI gains `--auto-tune` flag. `suggest_config`, `estimate_noise_floor` exported from top-level `nano_ext`. 12 unit tests added (`test_autotune.py`).
+4.  ✅ **Negative Control Integration**: `preprocessing/control.py` — `ControlStats` dataclass and `compute_control_stats()`. `run_pipeline(control_signal=…)` and `process_file(control_path=…)` accept a negative control trace; its `noise_std` overrides the sample-derived estimate. CLI gains `--control PATH` flag. `ControlStats`, `compute_control_stats` exported from top-level `nano_ext`. 11 unit tests added (`test_control.py`). Also fixed circular import in `preprocessing/baseline.py` (now imports `local_baseline_percentile` directly from `nano_ext._nano_ext`).
 
 ## 6. Design Note: Negative Control Data for Noise Characterization
 
