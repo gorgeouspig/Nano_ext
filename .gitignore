@@ -40,6 +40,10 @@ example_output/
 *.md
 !README.md
 
+# Internal example scripts (real data paths, benchmarks)
+examples/_bench_steps.py
+examples/run_real_data.py
+
 # Rust (future)
 target/
 
