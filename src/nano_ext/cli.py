@@ -138,6 +138,12 @@ def main(verbose):
     help="Information criterion for GMM selection: 'bic' or 'aic'.",
 )
 @click.option(
+    "--gmm-max-samples",
+    type=int,
+    default=100_000,
+    help="Maximum number of samples used to fit the GMM (subsampled if signal is larger).",
+)
+@click.option(
     "--max-sublevel-depth",
     type=int,
     default=5,
@@ -182,6 +188,7 @@ def analyze(
     gmm_max_components,
     bic_criterion,
     max_sublevel_depth,
+    gmm_max_samples,
     auto_tune,
     control_path,
     plot,
@@ -218,6 +225,7 @@ def analyze(
             gmm_max_components=gmm_max_components,
             bic_criterion=bic_criterion,
             max_sublevel_depth=max_sublevel_depth,
+            gmm_max_samples=gmm_max_samples,
         )
         click.echo("Auto-tune enabled: noise-aware defaults applied.")
     else:
@@ -236,6 +244,7 @@ def analyze(
             gmm_max_components=gmm_max_components,
             bic_criterion=bic_criterion,
             max_sublevel_depth=max_sublevel_depth,
+            gmm_max_samples=gmm_max_samples,
         )
 
     click.echo(f"Analyzing {filepath.name}...")

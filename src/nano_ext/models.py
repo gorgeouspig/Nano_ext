@@ -346,6 +346,7 @@ class DetectionConfig:
     # --- Threshold (GMM + BIC) ---
     gmm_max_components: int = 10
     bic_criterion: str = "bic"
+    gmm_max_samples: int = 100_000
 
     # --- Event detection ---
     event_direction: EventDirection = EventDirection.DOWN

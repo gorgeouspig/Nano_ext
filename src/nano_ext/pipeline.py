@@ -209,6 +209,7 @@ def run_pipeline(
         bl_result.residual,
         max_components=config.gmm_max_components,
         criterion=config.bic_criterion,
+        max_samples_for_fit=config.gmm_max_samples,
     )
     if verbose:
         logger.info(

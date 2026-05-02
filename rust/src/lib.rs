@@ -1,4 +1,5 @@
 use pyo3::prelude::*;
+use numpy::PyReadonlyArray1;
 
 /// A Python module implemented in Rust.
 #[pymodule]
@@ -77,18 +78,29 @@ fn pelt(signal: Vec<f64>, penalty_factor: f64, min_segment_samples: usize) -> Ve
 }
 
 #[pyfunction]
-fn local_baseline_percentile(signal: Vec<f64>, mask: Vec<bool>, window_samples: usize, percentile: f64) -> Vec<f64> {
+fn local_baseline_percentile(
+    py: Python<'_>,
+    signal: PyReadonlyArray1<f64>,
+    mask: PyReadonlyArray1<bool>,
+    window_samples: usize,
+    percentile: f64,
+) -> Vec<f64> {
+    let signal = signal.as_slice().expect("signal must be contiguous");
+    let mask   = mask.as_slice().expect("mask must be contiguous");
     let n_samples = signal.len();
     let half_win = window_samples / 2;
     let mut baseline = vec![0.0; n_samples];
-    
+
+    // Allow Python to handle signals and Ctrl-C during long runs
+    let _ = py;
+
     // Handle edge case where signal is too small
     if n_samples == 0 {
         return baseline;
     }
-    
+
     // Replace event samples with NaN for percentile calculation
-    let mut masked_signal = signal.clone();
+    let mut masked_signal: Vec<f64> = signal.to_vec();
     for i in 0..n_samples {
         if !mask[i] {
             masked_signal[i] = f64::NAN;
@@ -191,19 +203,19 @@ fn local_baseline_percentile(signal: Vec<f64>, mask: Vec<bool>, window_samples: 
     
     // Only smooth if we have enough points
     if n_samples >= smooth_window {
-        // Create a smoothed version
-        let mut smoothed = baseline.clone();
         let half_smooth = smooth_window / 2;
-        
+
+        // O(n) sliding mean via prefix sums — replaces the previous O(n×window) loop.
+        let mut prefix = vec![0.0_f64; n_samples + 1];
         for i in 0..n_samples {
-            let start = std::cmp::max(0, i as isize - half_smooth as isize) as usize;
+            prefix[i + 1] = prefix[i] + baseline[i];
+        }
+        let mut smoothed = vec![0.0_f64; n_samples];
+        for i in 0..n_samples {
+            let start = if i >= half_smooth { i - half_smooth } else { 0 };
             let end = std::cmp::min(n_samples, i + half_smooth + 1);
-            let window = &baseline[start..end];
-            let sum: f64 = window.iter().sum();
-            let count = window.len() as f64;
-            if count > 0.0 {
-                smoothed[i] = sum / count;
-            }
+            let count = (end - start) as f64;
+            smoothed[i] = (prefix[end] - prefix[start]) / count;
         }
         baseline = smoothed;
     }

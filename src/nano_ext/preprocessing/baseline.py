@@ -266,12 +266,12 @@ def _local_baseline_masked(
     np.ndarray
         Estimated local baseline.
     """
-    # Use Rust implementation for performance
+    # Use Rust implementation for performance.
+    # Pass numpy arrays directly — avoids creating intermediate Python lists.
     try:
-        signal_list = signal.tolist()
-        mask_list = mask.tolist()
+        sig64 = np.asarray(signal, dtype=np.float64)
         result_list = local_baseline_percentile(
-            signal_list, mask_list, window_samples, percentile
+            sig64, mask, window_samples, percentile
         )
         return np.array(result_list, dtype=np.float64)
     except Exception as e:
