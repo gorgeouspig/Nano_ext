@@ -11,7 +11,6 @@ Usage (in a Jupyter notebook cell):
 
 from __future__ import annotations
 
-import io
 import traceback
 from pathlib import Path
 
@@ -19,7 +18,7 @@ import numpy as np
 
 
 # ---------------------------------------------------------------------------
-# Lazy imports — only needed when the widgets are actually displayed
+# Lazy imports
 # ---------------------------------------------------------------------------
 
 def _require_widgets():
@@ -57,23 +56,19 @@ def _require_filechooser():
         )
 
 
+def _hint(text: str) -> "ipywidgets.HTML":
+    import ipywidgets as widgets
+    return widgets.HTML(
+        f"<span style='color:#888;font-size:0.82em;margin-left:4px'>{text}</span>"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Plotly figure builder
 # ---------------------------------------------------------------------------
 
 def make_plotly_figure(result) -> "plotly.graph_objects.Figure":
-    """Build an interactive plotly figure from a PipelineResult.
-
-    Parameters
-    ----------
-    result : PipelineResult
-        Output of ``run_pipeline``.
-
-    Returns
-    -------
-    plotly.graph_objects.Figure
-        Interactive figure with signal, baseline, threshold, and event markers.
-    """
+    """Build an interactive plotly figure from a PipelineResult."""
     go, make_subplots = _require_plotly()
 
     sr = result.signal_data.sampling_rate
@@ -91,77 +86,49 @@ def make_plotly_figure(result) -> "plotly.graph_objects.Figure":
         vertical_spacing=0.05,
     )
 
-    # ---- Row 1: signal + baseline + threshold ----
-    fig.add_trace(
-        go.Scatter(
-            x=t, y=result.filtered_signal,
-            mode="lines",
-            line=dict(color="#4C72B0", width=0.8),
-            name="Filtered signal",
-            hovertemplate="t=%{x:.3f} ms<br>I=%{y:.4f} " + units + "<extra></extra>",
-        ),
-        row=1, col=1,
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=t, y=baseline,
-            mode="lines",
-            line=dict(color="#DD8452", width=1.2, dash="dash"),
-            name="Baseline",
-            hovertemplate="t=%{x:.3f} ms<br>baseline=%{y:.4f} " + units + "<extra></extra>",
-        ),
-        row=1, col=1,
-    )
+    fig.add_trace(go.Scatter(
+        x=t, y=result.filtered_signal,
+        mode="lines", line=dict(color="#4C72B0", width=0.8),
+        name="Filtered signal",
+        hovertemplate="t=%{x:.3f} ms<br>I=%{y:.4f} " + units + "<extra></extra>",
+    ), row=1, col=1)
 
-    threshold_y = baseline + threshold
-    fig.add_trace(
-        go.Scatter(
-            x=t, y=threshold_y,
-            mode="lines",
-            line=dict(color="#C44E52", width=1.0, dash="dot"),
-            name="Threshold",
-            hoverinfo="skip",
-        ),
-        row=1, col=1,
-    )
+    fig.add_trace(go.Scatter(
+        x=t, y=baseline,
+        mode="lines", line=dict(color="#DD8452", width=1.2, dash="dash"),
+        name="Baseline",
+        hovertemplate="t=%{x:.3f} ms<br>baseline=%{y:.4f} " + units + "<extra></extra>",
+    ), row=1, col=1)
+
+    fig.add_trace(go.Scatter(
+        x=t, y=baseline + threshold,
+        mode="lines", line=dict(color="#C44E52", width=1.0, dash="dot"),
+        name="Threshold", hoverinfo="skip",
+    ), row=1, col=1)
+
     from nano_ext.models import EventDirection
     if result.config.event_direction == EventDirection.BOTH:
-        upper_threshold_y = baseline - threshold
-        fig.add_trace(
-            go.Scatter(
-                x=t, y=upper_threshold_y,
-                mode="lines",
-                line=dict(color="#8172B2", width=1.0, dash="dot"),
-                name="Threshold (up)",
-                hoverinfo="skip",
-            ),
-            row=1, col=1,
-        )
+        fig.add_trace(go.Scatter(
+            x=t, y=baseline - threshold,
+            mode="lines", line=dict(color="#8172B2", width=1.0, dash="dot"),
+            name="Threshold (up)", hoverinfo="skip",
+        ), row=1, col=1)
 
     _add_event_traces(fig, result, t, units)
 
-    # ---- Row 2: event depth bar chart ----
     if result.events:
-        ev_t = [ev.start_idx / sr * 1000 for ev in result.events]
+        ev_t     = [ev.start_idx / sr * 1000 for ev in result.events]
         ev_depth = [ev.depth for ev in result.events]
-        ev_dur = [ev.duration * 1000 for ev in result.events]
-        ev_text = [
+        ev_dur   = [ev.duration * 1000 for ev in result.events]
+        ev_text  = [
             f"#{i+1}<br>depth={d:.4f} {units}<br>dur={dur:.3f} ms"
             for i, (d, dur) in enumerate(zip(ev_depth, ev_dur))
         ]
-        fig.add_trace(
-            go.Bar(
-                x=ev_t,
-                y=ev_depth,
-                width=[dur for dur in ev_dur],
-                text=ev_text,
-                hovertemplate="%{text}<extra></extra>",
-                marker_color="#4C72B0",
-                name="Event depth",
-                showlegend=False,
-            ),
-            row=2, col=1,
-        )
+        fig.add_trace(go.Bar(
+            x=ev_t, y=ev_depth, width=ev_dur,
+            text=ev_text, hovertemplate="%{text}<extra></extra>",
+            marker_color="#4C72B0", name="Event depth", showlegend=False,
+        ), row=2, col=1)
 
     fig.update_layout(
         height=600,
@@ -173,31 +140,21 @@ def make_plotly_figure(result) -> "plotly.graph_objects.Figure":
     fig.update_xaxes(title_text="Time (ms)", row=2, col=1)
     fig.update_yaxes(title_text=f"Current ({units})", row=1, col=1)
     fig.update_yaxes(title_text=f"Depth ({units})", row=2, col=1)
-
     return fig
 
 
 def _add_event_traces(fig, result, t, units):
     go, _ = _require_plotly()
     sr = result.signal_data.sampling_rate
-
     for i, ev in enumerate(result.events):
         x0 = ev.start_idx / sr * 1000
         x1 = ev.end_idx / sr * 1000
-        depth = ev.depth
-        dur_ms = ev.duration * 1000
-        label = f"Event #{i+1}<br>depth={depth:.4f} {units}<br>dur={dur_ms:.3f} ms"
         color = "rgba(196,78,82,0.15)" if ev.direction.value == "down" else "rgba(129,114,178,0.15)"
         fig.add_vrect(
-            x0=x0, x1=x1,
-            fillcolor=color,
-            opacity=1.0,
-            layer="below",
-            line_width=0,
-            row=1, col=1,
+            x0=x0, x1=x1, fillcolor=color, opacity=1.0,
+            layer="below", line_width=0, row=1, col=1,
             annotation_text="" if len(result.events) > 50 else f"#{i+1}",
-            annotation_position="top left",
-            annotation_font_size=9,
+            annotation_position="top left", annotation_font_size=9,
         )
 
 
@@ -231,11 +188,15 @@ class NanoExtUI:
         # ------------------------------------------------------------------ #
         # Section 1: File Loading
         # ------------------------------------------------------------------ #
-        s1_title = widgets.HTML("<h3 style='margin-bottom:4px'>1. File Loading</h3>")
-
         self.w_filechooser = FileChooser(
             path=str(Path.home()),
             title="Signal file",
+            show_hidden=False,
+            use_dir_icons=True,
+        )
+        self.w_control_chooser = FileChooser(
+            path=str(Path.home()),
+            title="Control file (optional — analyte-free recording for noise characterisation)",
             show_hidden=False,
             use_dir_icons=True,
         )
@@ -256,51 +217,71 @@ class NanoExtUI:
             layout=widgets.Layout(width="260px"),
             style={"description_width": "150px"},
         )
-        self.w_sampling_rate_box = widgets.HBox([
-            self.w_sampling_rate,
-            widgets.HTML("<span style='color:gray;font-size:0.85em;margin-left:8px'>(required for binary files)</span>"),
-        ])
         self.w_load_btn = widgets.Button(
             description="Load", button_style="info",
             layout=widgets.Layout(width="120px"),
         )
         self.w_load_status = widgets.HTML("")
 
-        self.w_control_chooser = FileChooser(
-            path=str(Path.home()),
-            title="Control file (optional)",
-            show_hidden=False,
-            use_dir_icons=True,
-        )
-
         section1 = widgets.VBox([
-            s1_title,
+            widgets.HTML("<h3 style='margin:0 0 6px'>1. File Loading</h3>"),
             self.w_filechooser,
             widgets.HBox([self.w_format, self.w_channel]),
-            self.w_sampling_rate_box,
+            widgets.HBox([
+                self.w_sampling_rate,
+                _hint("(required for binary files only)"),
+            ]),
             self.w_control_chooser,
             self.w_load_btn,
             self.w_load_status,
         ], layout=widgets.Layout(border="1px solid #ddd", padding="10px", margin="5px 0"))
 
         # ------------------------------------------------------------------ #
-        # Section 2: Preprocessing
+        # Section 2: Core Settings (always visible)
         # ------------------------------------------------------------------ #
-        s2_title = widgets.HTML("<h3 style='margin-bottom:4px'>2. Preprocessing</h3>")
-
+        self.w_event_direction = widgets.Dropdown(
+            options=[("Down (blockade — current decreases)", "down"),
+                     ("Up (anti-blockade — current increases)", "up"),
+                     ("Both", "both")],
+            description="Direction:",
+            layout=widgets.Layout(width="380px"),
+            style={"description_width": "80px"},
+        )
         self.w_auto_tune = widgets.Checkbox(
-            value=True, description="Auto-tune (noise-aware defaults)",
+            value=True,
+            description="Auto-tune detection parameters",
             indent=False,
         )
+
+        section2 = widgets.VBox([
+            widgets.HTML("<h3 style='margin:0 0 6px'>2. Analysis Settings</h3>"),
+            widgets.VBox([
+                self.w_event_direction,
+                _hint("Choose 'Down' if molecules block the pore (most common). "
+                      "Choose 'Up' if your signal increases during translocation."),
+            ]),
+            widgets.HTML("<div style='margin-top:8px'></div>"),
+            widgets.VBox([
+                self.w_auto_tune,
+                _hint("When enabled, baseline window, minimum event duration, and filter "
+                      "cutoff are set automatically from the signal noise level. "
+                      "Recommended for most users — disable only to fine-tune manually."),
+            ]),
+        ], layout=widgets.Layout(border="1px solid #ddd", padding="10px", margin="5px 0"))
+
+        # ------------------------------------------------------------------ #
+        # Section 3: Additional Settings (accordion, collapsed by default)
+        # ------------------------------------------------------------------ #
+
+        # --- Preprocessing ---
         self.w_apply_filter = widgets.Checkbox(
-            value=True, description="Apply low-pass filter",
-            indent=False,
+            value=False, description="Apply software low-pass filter", indent=False,
         )
         self.w_filter_cutoff = widgets.FloatText(
             value=10000.0,
-            description="Cutoff frequency (Hz):",
-            layout=widgets.Layout(width="260px"),
-            style={"description_width": "150px"},
+            description="Cutoff (Hz):",
+            layout=widgets.Layout(width="220px"),
+            style={"description_width": "90px"},
         )
         self.w_filter_type = widgets.Dropdown(
             options=["bessel", "butterworth"],
@@ -308,36 +289,27 @@ class NanoExtUI:
             style={"description_width": "90px"},
         )
 
-        def _on_autotune(change):
-            disabled = change["new"]
-            self.w_filter_cutoff.disabled = disabled
-            self.w_filter_type.disabled = disabled
-        self.w_auto_tune.observe(_on_autotune, names="value")
-        _on_autotune({"new": self.w_auto_tune.value})
-
-        section2 = widgets.VBox([
-            s2_title,
-            self.w_auto_tune,
+        preproc_box = widgets.VBox([
+            widgets.HTML("<b>Preprocessing</b>"),
+            widgets.HTML(
+                "<p style='color:#555;font-size:0.88em;margin:4px 0 8px'>"
+                "Most instruments apply a hardware low-pass filter during recording, "
+                "so software filtering is usually <em>not</em> needed. "
+                "Enable this only if your raw data is unfiltered.</p>"
+            ),
             self.w_apply_filter,
             widgets.HBox([self.w_filter_cutoff, self.w_filter_type]),
-        ], layout=widgets.Layout(border="1px solid #ddd", padding="10px", margin="5px 0"))
+            _hint("Bessel filter (recommended): minimal distortion of event shape. "
+                  "Butterworth: sharper roll-off but more ringing."),
+        ])
 
-        # ------------------------------------------------------------------ #
-        # Section 3: Detection Parameters
-        # ------------------------------------------------------------------ #
-        s3_title = widgets.HTML("<h3 style='margin-bottom:4px'>3. Detection Parameters</h3>")
-
-        self.w_event_direction = widgets.Dropdown(
-            options=[("Down (blockade)", "down"), ("Up (anti-blockade)", "up"), ("Both", "both")],
-            description="Direction:",
-            style={"description_width": "80px"},
-        )
+        # --- Detection Parameters ---
         self.w_baseline_window = widgets.FloatSlider(
             value=5.0, min=0.5, max=30.0, step=0.5,
             description="Baseline window (s):",
             readout_format=".1f",
             layout=widgets.Layout(width="420px"),
-            style={"description_width": "150px"},
+            style={"description_width": "160px"},
         )
         self.w_min_duration = widgets.FloatLogSlider(
             value=1e-4, base=10, min=-5, max=-2, step=0.1,
@@ -353,25 +325,53 @@ class NanoExtUI:
             style={"description_width": "160px"},
         )
 
-        def _on_autotune2(change):
-            disabled = change["new"]
-            for w in [self.w_baseline_window, self.w_min_duration, self.w_gmm_components]:
-                w.disabled = disabled
-        self.w_auto_tune.observe(_on_autotune2, names="value")
-        _on_autotune2({"new": self.w_auto_tune.value})
-
-        section3 = widgets.VBox([
-            s3_title,
-            self.w_event_direction,
+        detect_box = widgets.VBox([
+            widgets.HTML("<b style='margin-top:12px;display:block'>Detection Parameters</b>"),
+            widgets.HTML(
+                "<p style='color:#555;font-size:0.88em;margin:4px 0 4px'>"
+                "These are set automatically when Auto-tune is enabled.</p>"
+            ),
             self.w_baseline_window,
+            _hint("Sliding window used to track the open-pore baseline. "
+                  "Should be several times longer than the typical gap between events. "
+                  "Increase if the baseline drifts slowly; decrease if events are very frequent."),
+            widgets.HTML("<div style='margin-top:6px'></div>"),
             self.w_min_duration,
+            _hint("Events shorter than this are discarded as noise. "
+                  "The lower bound is set by the filter rise time (~5 / filter cutoff). "
+                  "Typical values: 0.05 ms (5×10⁻⁵ s) to 0.5 ms."),
+            widgets.HTML("<div style='margin-top:6px'></div>"),
             self.w_gmm_components,
-        ], layout=widgets.Layout(border="1px solid #ddd", padding="10px", margin="5px 0"))
+            _hint("Maximum number of current levels the GMM threshold model will consider. "
+                  "Increase only if you expect many distinct blockade levels in one recording."),
+        ])
+
+        additional_content = widgets.VBox(
+            [preproc_box, widgets.HTML("<hr style='margin:10px 0'>"), detect_box],
+            layout=widgets.Layout(padding="8px"),
+        )
+        accordion = widgets.Accordion(children=[additional_content])
+        accordion.set_title(0, "Additional Settings")
+        accordion.selected_index = None  # collapsed by default
+
+        # Disable manual detection params when auto-tune is ON
+        def _on_autotune(change):
+            disabled = change["new"]
+            for w in [self.w_filter_cutoff, self.w_filter_type,
+                      self.w_baseline_window, self.w_min_duration,
+                      self.w_gmm_components]:
+                w.disabled = disabled
+        self.w_auto_tune.observe(_on_autotune, names="value")
+        _on_autotune({"new": self.w_auto_tune.value})
+
+        section3 = widgets.VBox(
+            [accordion],
+            layout=widgets.Layout(margin="5px 0"),
+        )
 
         # ------------------------------------------------------------------ #
         # Section 4: Run
         # ------------------------------------------------------------------ #
-        s4_title = widgets.HTML("<h3 style='margin-bottom:4px'>4. Run Analysis</h3>")
         self.w_run_btn = widgets.Button(
             description="Run Analysis",
             button_style="success",
@@ -381,7 +381,7 @@ class NanoExtUI:
         self.w_run_status = widgets.HTML("")
 
         section4 = widgets.VBox([
-            s4_title,
+            widgets.HTML("<h3 style='margin:0 0 6px'>3. Run</h3>"),
             self.w_run_btn,
             self.w_run_status,
         ], layout=widgets.Layout(border="1px solid #ddd", padding="10px", margin="5px 0"))
@@ -389,7 +389,6 @@ class NanoExtUI:
         # ------------------------------------------------------------------ #
         # Section 5: Results
         # ------------------------------------------------------------------ #
-        s5_title = widgets.HTML("<h3 style='margin-bottom:4px'>5. Results</h3>")
         self.w_summary = widgets.HTML("")
         self.w_plot_out = widgets.Output()
         self.w_table_out = widgets.Output()
@@ -403,7 +402,7 @@ class NanoExtUI:
         self.w_download_status = widgets.HTML("")
 
         section5 = widgets.VBox([
-            s5_title,
+            widgets.HTML("<h3 style='margin:0 0 6px'>4. Results</h3>"),
             self.w_summary,
             self.w_plot_out,
             self.w_table_out,
@@ -475,9 +474,8 @@ class NanoExtUI:
 
         sr = self._result.signal_data.sampling_rate
         units = self._result.signal_data.units or "pA"
-        rows = []
-        for i, ev in enumerate(events):
-            rows.append({
+        rows = [
+            {
                 "event_id": i + 1,
                 "start_sec": ev.start_idx / sr,
                 "end_sec": ev.end_idx / sr,
@@ -486,18 +484,18 @@ class NanoExtUI:
                 "area": ev.area,
                 "n_sublevels": len(ev.sublevels),
                 "direction": ev.direction.value,
-            })
-        df = pd.DataFrame(rows)
-        csv_str = df.to_csv(index=False)
+            }
+            for i, ev in enumerate(events)
+        ]
+        csv_str = pd.DataFrame(rows).to_csv(index=False)
         b64 = base64.b64encode(csv_str.encode()).decode()
         stem = Path(self.w_filechooser.selected or "recording").stem
         filename = f"{stem}_events.csv"
-        href = (
+        self.w_download_status.value = (
             f'<a download="{filename}" href="data:text/csv;base64,{b64}" '
             f'style="text-decoration:none">'
             f'<button style="padding:4px 12px">⬇ {filename}</button></a>'
         )
-        self.w_download_status.value = href
 
     # ------------------------------------------------------------------ #
     # Internals
@@ -560,8 +558,8 @@ class NanoExtUI:
 
     def _render_results(self, display, HTML):
         result = self._result
-        units = result.signal_data.units or "pA"
         sr = result.signal_data.sampling_rate
+        units = result.signal_data.units or "pA"
 
         self.w_summary.value = (
             f"<pre style='background:#f8f8f8;padding:8px;border-radius:4px'>"
@@ -571,16 +569,14 @@ class NanoExtUI:
 
         self.w_plot_out.clear_output(wait=True)
         with self.w_plot_out:
-            fig = make_plotly_figure(result)
-            fig.show()
+            make_plotly_figure(result).show()
 
         self.w_table_out.clear_output(wait=True)
         with self.w_table_out:
             import pandas as pd
             if result.events:
-                rows = []
-                for i, ev in enumerate(result.events):
-                    rows.append({
+                rows = [
+                    {
                         "ID": i + 1,
                         "Start (ms)": f"{ev.start_idx / sr * 1000:.3f}",
                         "End (ms)": f"{ev.end_idx / sr * 1000:.3f}",
@@ -589,7 +585,9 @@ class NanoExtUI:
                         "Area": f"{ev.area:.4f}",
                         "Sub-levels": len(ev.sublevels),
                         "Direction": ev.direction.value,
-                    })
+                    }
+                    for i, ev in enumerate(result.events)
+                ]
                 display(pd.DataFrame(rows))
             else:
                 display(HTML("<p style='color:gray'>No events detected.</p>"))
