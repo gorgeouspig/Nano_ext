@@ -14,7 +14,6 @@ from __future__ import annotations
 import io
 import traceback
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
@@ -43,6 +42,17 @@ def _require_plotly():
     except ImportError:
         raise ImportError(
             "plotly is required for interactive plots.\n"
+            'Install it with:  pip install "nano_ext[notebook]"'
+        )
+
+
+def _require_filechooser():
+    try:
+        from ipyfilechooser import FileChooser
+        return FileChooser
+    except ImportError:
+        raise ImportError(
+            "ipyfilechooser is required for the file picker.\n"
             'Install it with:  pip install "nano_ext[notebook]"'
         )
 
@@ -103,7 +113,6 @@ def make_plotly_figure(result) -> "plotly.graph_objects.Figure":
         row=1, col=1,
     )
 
-    # Threshold line(s)
     threshold_y = baseline + threshold
     fig.add_trace(
         go.Scatter(
@@ -115,10 +124,9 @@ def make_plotly_figure(result) -> "plotly.graph_objects.Figure":
         ),
         row=1, col=1,
     )
-    # If BOTH direction: also show upper threshold
     from nano_ext.models import EventDirection
     if result.config.event_direction == EventDirection.BOTH:
-        upper_threshold_y = baseline - threshold  # symmetric
+        upper_threshold_y = baseline - threshold
         fig.add_trace(
             go.Scatter(
                 x=t, y=upper_threshold_y,
@@ -130,7 +138,6 @@ def make_plotly_figure(result) -> "plotly.graph_objects.Figure":
             row=1, col=1,
         )
 
-    # ---- Event shading + hover markers ----
     _add_event_traces(fig, result, t, units)
 
     # ---- Row 2: event depth bar chart ----
@@ -171,12 +178,9 @@ def make_plotly_figure(result) -> "plotly.graph_objects.Figure":
 
 
 def _add_event_traces(fig, result, t, units):
-    """Add semi-transparent event region shading to row 1."""
     go, _ = _require_plotly()
     sr = result.signal_data.sampling_rate
 
-    # Draw vrect-style shading via Scatter fill for each event
-    # (plotly add_vrect is simpler but doesn't support custom hover)
     for i, ev in enumerate(result.events):
         x0 = ev.start_idx / sr * 1000
         x1 = ev.end_idx / sr * 1000
@@ -215,7 +219,6 @@ class NanoExtUI:
 
     def __init__(self):
         self._result = None
-        self._widgets_built = False
 
     def display(self):
         """Render the full UI in the current Jupyter cell output."""
@@ -223,57 +226,59 @@ class NanoExtUI:
         self._build(widgets, display, HTML)
 
     def _build(self, widgets, display, HTML):
+        FileChooser = _require_filechooser()
+
         # ------------------------------------------------------------------ #
         # Section 1: File Loading
         # ------------------------------------------------------------------ #
-        s1_title = widgets.HTML("<h3 style='margin-bottom:4px'>1. ファイル読み込み</h3>")
+        s1_title = widgets.HTML("<h3 style='margin-bottom:4px'>1. File Loading</h3>")
 
-        self.w_filepath = widgets.Text(
-            description="ファイルパス:",
-            placeholder="/path/to/recording.abf",
-            layout=widgets.Layout(width="500px"),
-            style={"description_width": "100px"},
+        self.w_filechooser = FileChooser(
+            path=str(Path.home()),
+            title="Signal file",
+            show_hidden=False,
+            use_dir_icons=True,
         )
         self.w_format = widgets.Dropdown(
-            options=[("自動検出", None), ("ABF", "abf"), ("Binary", "binary")],
-            description="フォーマット:",
-            style={"description_width": "100px"},
+            options=[("Auto-detect", None), ("ABF", "abf"), ("Binary", "binary")],
+            description="Format:",
+            style={"description_width": "80px"},
         )
         self.w_channel = widgets.BoundedIntText(
             value=0, min=0, max=16,
-            description="チャンネル:",
-            layout=widgets.Layout(width="200px"),
-            style={"description_width": "100px"},
+            description="Channel:",
+            layout=widgets.Layout(width="180px"),
+            style={"description_width": "70px"},
         )
         self.w_sampling_rate = widgets.FloatText(
             value=100000.0,
-            description="サンプリングレート (Hz):",
-            layout=widgets.Layout(width="280px"),
-            style={"description_width": "170px"},
+            description="Sampling rate (Hz):",
+            layout=widgets.Layout(width="260px"),
+            style={"description_width": "150px"},
         )
-        self.w_sampling_rate_box = widgets.HBox(
-            [self.w_sampling_rate,
-             widgets.HTML("<span style='color:gray;font-size:0.85em;margin-left:8px'>(binary形式のみ必要)</span>")]
-        )
+        self.w_sampling_rate_box = widgets.HBox([
+            self.w_sampling_rate,
+            widgets.HTML("<span style='color:gray;font-size:0.85em;margin-left:8px'>(required for binary files)</span>"),
+        ])
         self.w_load_btn = widgets.Button(
             description="Load", button_style="info",
             layout=widgets.Layout(width="120px"),
         )
         self.w_load_status = widgets.HTML("")
 
-        self.w_control_path = widgets.Text(
-            description="コントロールパス:",
-            placeholder="(オプション) /path/to/control.abf",
-            layout=widgets.Layout(width="500px"),
-            style={"description_width": "130px"},
+        self.w_control_chooser = FileChooser(
+            path=str(Path.home()),
+            title="Control file (optional)",
+            show_hidden=False,
+            use_dir_icons=True,
         )
 
         section1 = widgets.VBox([
             s1_title,
-            self.w_filepath,
+            self.w_filechooser,
             widgets.HBox([self.w_format, self.w_channel]),
             self.w_sampling_rate_box,
-            self.w_control_path,
+            self.w_control_chooser,
             self.w_load_btn,
             self.w_load_status,
         ], layout=widgets.Layout(border="1px solid #ddd", padding="10px", margin="5px 0"))
@@ -281,29 +286,28 @@ class NanoExtUI:
         # ------------------------------------------------------------------ #
         # Section 2: Preprocessing
         # ------------------------------------------------------------------ #
-        s2_title = widgets.HTML("<h3 style='margin-bottom:4px'>2. 前処理</h3>")
+        s2_title = widgets.HTML("<h3 style='margin-bottom:4px'>2. Preprocessing</h3>")
 
         self.w_auto_tune = widgets.Checkbox(
-            value=True, description="Auto-tune (ノイズから自動設定)",
+            value=True, description="Auto-tune (noise-aware defaults)",
             indent=False,
         )
         self.w_apply_filter = widgets.Checkbox(
-            value=True, description="低域通過フィルタを適用",
+            value=True, description="Apply low-pass filter",
             indent=False,
         )
         self.w_filter_cutoff = widgets.FloatText(
             value=10000.0,
-            description="カットオフ周波数 (Hz):",
-            layout=widgets.Layout(width="280px"),
-            style={"description_width": "160px"},
+            description="Cutoff frequency (Hz):",
+            layout=widgets.Layout(width="260px"),
+            style={"description_width": "150px"},
         )
         self.w_filter_type = widgets.Dropdown(
             options=["bessel", "butterworth"],
-            description="フィルタ種別:",
-            style={"description_width": "100px"},
+            description="Filter type:",
+            style={"description_width": "90px"},
         )
 
-        # Auto-tune ON → filter_cutoff/type の手動設定を無効化
         def _on_autotune(change):
             disabled = change["new"]
             self.w_filter_cutoff.disabled = disabled
@@ -321,35 +325,34 @@ class NanoExtUI:
         # ------------------------------------------------------------------ #
         # Section 3: Detection Parameters
         # ------------------------------------------------------------------ #
-        s3_title = widgets.HTML("<h3 style='margin-bottom:4px'>3. 検出パラメータ</h3>")
+        s3_title = widgets.HTML("<h3 style='margin-bottom:4px'>3. Detection Parameters</h3>")
 
         self.w_event_direction = widgets.Dropdown(
-            options=[("下向き (blockade)", "down"), ("上向き (up)", "up"), ("両方向 (both)", "both")],
-            description="イベント方向:",
-            style={"description_width": "120px"},
+            options=[("Down (blockade)", "down"), ("Up (anti-blockade)", "up"), ("Both", "both")],
+            description="Direction:",
+            style={"description_width": "80px"},
         )
         self.w_baseline_window = widgets.FloatSlider(
             value=5.0, min=0.5, max=30.0, step=0.5,
-            description="ベースライン窓 (s):",
+            description="Baseline window (s):",
             readout_format=".1f",
             layout=widgets.Layout(width="420px"),
             style={"description_width": "150px"},
         )
         self.w_min_duration = widgets.FloatLogSlider(
             value=1e-4, base=10, min=-5, max=-2, step=0.1,
-            description="最小イベント長 (s):",
+            description="Min event duration (s):",
             readout_format=".2e",
             layout=widgets.Layout(width="420px"),
-            style={"description_width": "150px"},
+            style={"description_width": "160px"},
         )
         self.w_gmm_components = widgets.IntSlider(
             value=5, min=2, max=15,
-            description="GMM最大コンポーネント:",
+            description="Max GMM components:",
             layout=widgets.Layout(width="420px"),
-            style={"description_width": "170px"},
+            style={"description_width": "160px"},
         )
 
-        # Auto-tune ON → 手動パラメータを無効化
         def _on_autotune2(change):
             disabled = change["new"]
             for w in [self.w_baseline_window, self.w_min_duration, self.w_gmm_components]:
@@ -368,7 +371,7 @@ class NanoExtUI:
         # ------------------------------------------------------------------ #
         # Section 4: Run
         # ------------------------------------------------------------------ #
-        s4_title = widgets.HTML("<h3 style='margin-bottom:4px'>4. 解析実行</h3>")
+        s4_title = widgets.HTML("<h3 style='margin-bottom:4px'>4. Run Analysis</h3>")
         self.w_run_btn = widgets.Button(
             description="Run Analysis",
             button_style="success",
@@ -386,7 +389,7 @@ class NanoExtUI:
         # ------------------------------------------------------------------ #
         # Section 5: Results
         # ------------------------------------------------------------------ #
-        s5_title = widgets.HTML("<h3 style='margin-bottom:4px'>5. 結果</h3>")
+        s5_title = widgets.HTML("<h3 style='margin-bottom:4px'>5. Results</h3>")
         self.w_summary = widgets.HTML("")
         self.w_plot_out = widgets.Output()
         self.w_table_out = widgets.Output()
@@ -414,49 +417,46 @@ class NanoExtUI:
         self.w_run_btn.on_click(lambda _: self._on_run(widgets, display, HTML))
         self.w_download_btn.on_click(lambda _: self._on_download(display, HTML))
 
-        full_ui = widgets.VBox([section1, section2, section3, section4, section5])
-        display(full_ui)
+        display(widgets.VBox([section1, section2, section3, section4, section5]))
 
     # ------------------------------------------------------------------ #
     # Callbacks
     # ------------------------------------------------------------------ #
 
     def _on_load(self, widgets, HTML):
-        self.w_load_status.value = "<span style='color:gray'>読み込み中...</span>"
-        filepath = self.w_filepath.value.strip()
+        self.w_load_status.value = "<span style='color:gray'>Loading...</span>"
+        filepath = self.w_filechooser.selected
         if not filepath:
-            self.w_load_status.value = "<span style='color:red'>ファイルパスを入力してください。</span>"
+            self.w_load_status.value = "<span style='color:red'>Please select a file.</span>"
             return
         p = Path(filepath)
         if not p.exists():
-            self.w_load_status.value = f"<span style='color:red'>ファイルが見つかりません: {filepath}</span>"
+            self.w_load_status.value = f"<span style='color:red'>File not found: {filepath}</span>"
             return
         try:
             sd = self._load_signal(filepath)
-            msg = (
-                f"<span style='color:green'>✓ 読み込み完了</span> — "
+            self.w_load_status.value = (
+                f"<span style='color:green'>✓ Loaded</span> — "
                 f"{sd.n_samples:,} samples @ {sd.sampling_rate:.0f} Hz "
                 f"({sd.duration_sec:.3f} s)"
             )
-            self.w_load_status.value = msg
-            # Update filter_cutoff default to sr/10 if not already customised
             if not self.w_auto_tune.value:
                 self.w_filter_cutoff.value = sd.sampling_rate / 10.0
         except Exception as e:
-            self.w_load_status.value = f"<span style='color:red'>エラー: {e}</span>"
+            self.w_load_status.value = f"<span style='color:red'>Error: {e}</span>"
 
     def _on_run(self, widgets, display, HTML):
-        self.w_run_status.value = "<span style='color:gray'>解析中...</span>"
+        self.w_run_status.value = "<span style='color:gray'>Running analysis...</span>"
         self.w_run_btn.disabled = True
         try:
             self._run_pipeline()
-            self.w_run_status.value = "<span style='color:green'>✓ 完了</span>"
+            self.w_run_status.value = "<span style='color:green'>✓ Done</span>"
             self._render_results(display, HTML)
             self.w_download_btn.disabled = False
         except Exception:
             tb = traceback.format_exc()
             self.w_run_status.value = (
-                f"<span style='color:red'>エラーが発生しました。</span>"
+                f"<span style='color:red'>An error occurred.</span>"
                 f"<pre style='font-size:0.8em;color:red'>{tb}</pre>"
             )
         finally:
@@ -465,25 +465,24 @@ class NanoExtUI:
     def _on_download(self, display, HTML):
         if self._result is None:
             return
-        from nano_ext.outputs.csv_writer import write_events_to_csv
         import base64
-        buf = io.StringIO()
-        import csv as _csv
-        sr = self._result.signal_data.sampling_rate
-        # Write to StringIO via csv module
+        import pandas as pd
+
         events = self._result.events
         if not events:
-            self.w_download_status.value = "<span style='color:gray'>イベントがありません。</span>"
+            self.w_download_status.value = "<span style='color:gray'>No events to download.</span>"
             return
-        import pandas as pd
+
+        sr = self._result.signal_data.sampling_rate
+        units = self._result.signal_data.units or "pA"
         rows = []
-        for ev in events:
+        for i, ev in enumerate(events):
             rows.append({
-                "event_id": ev.event_id,
+                "event_id": i + 1,
                 "start_sec": ev.start_idx / sr,
                 "end_sec": ev.end_idx / sr,
                 "duration_ms": ev.duration * 1000,
-                "depth": ev.depth,
+                f"depth_{units}": ev.depth,
                 "area": ev.area,
                 "n_sublevels": len(ev.sublevels),
                 "direction": ev.direction.value,
@@ -491,7 +490,7 @@ class NanoExtUI:
         df = pd.DataFrame(rows)
         csv_str = df.to_csv(index=False)
         b64 = base64.b64encode(csv_str.encode()).decode()
-        stem = Path(self.w_filepath.value.strip()).stem
+        stem = Path(self.w_filechooser.selected or "recording").stem
         filename = f"{stem}_events.csv"
         href = (
             f'<a download="{filename}" href="data:text/csv;base64,{b64}" '
@@ -505,7 +504,6 @@ class NanoExtUI:
     # ------------------------------------------------------------------ #
 
     def _load_signal(self, filepath: str):
-        from nano_ext.models import SignalData
         p = Path(filepath)
         fmt = self.w_format.value
         if fmt is None:
@@ -526,8 +524,7 @@ class NanoExtUI:
         from nano_ext.detection.autotune import suggest_config
         from nano_ext.models import EventDirection
 
-        signal_data = self._load_signal(self.w_filepath.value.strip())
-
+        signal_data = self._load_signal(self.w_filechooser.selected)
         direction = EventDirection(self.w_event_direction.value)
 
         if self.w_auto_tune.value:
@@ -548,9 +545,8 @@ class NanoExtUI:
                 event_direction=direction,
             )
 
-        # Optional control signal
         control_signal = None
-        ctrl_path = self.w_control_path.value.strip()
+        ctrl_path = self.w_control_chooser.selected
         if ctrl_path:
             control_signal = self._load_signal(ctrl_path)
 
@@ -564,40 +560,36 @@ class NanoExtUI:
 
     def _render_results(self, display, HTML):
         result = self._result
+        units = result.signal_data.units or "pA"
+        sr = result.signal_data.sampling_rate
 
-        # Summary
         self.w_summary.value = (
             f"<pre style='background:#f8f8f8;padding:8px;border-radius:4px'>"
             f"{result.summary()}"
             f"</pre>"
         )
 
-        # Plot
         self.w_plot_out.clear_output(wait=True)
         with self.w_plot_out:
             fig = make_plotly_figure(result)
             fig.show()
 
-        # Event table
         self.w_table_out.clear_output(wait=True)
         with self.w_table_out:
             import pandas as pd
-            sr = result.signal_data.sampling_rate
-            units = result.signal_data.units or "pA"
             if result.events:
                 rows = []
-                for ev in result.events:
+                for i, ev in enumerate(result.events):
                     rows.append({
-                        "ID": ev.event_id,
-                        "開始 (ms)": f"{ev.start_idx / sr * 1000:.3f}",
-                        "終了 (ms)": f"{ev.end_idx / sr * 1000:.3f}",
-                        f"深さ ({units})": f"{ev.depth:.4f}",
-                        "持続 (ms)": f"{ev.duration * 1000:.3f}",
-                        "面積": f"{ev.area:.4f}",
-                        "サブレベル数": len(ev.sublevels),
-                        "方向": ev.direction.value,
+                        "ID": i + 1,
+                        "Start (ms)": f"{ev.start_idx / sr * 1000:.3f}",
+                        "End (ms)": f"{ev.end_idx / sr * 1000:.3f}",
+                        f"Depth ({units})": f"{ev.depth:.4f}",
+                        "Duration (ms)": f"{ev.duration * 1000:.3f}",
+                        "Area": f"{ev.area:.4f}",
+                        "Sub-levels": len(ev.sublevels),
+                        "Direction": ev.direction.value,
                     })
-                df = pd.DataFrame(rows)
-                display(df)
+                display(pd.DataFrame(rows))
             else:
-                display(HTML("<p style='color:gray'>イベントは検出されませんでした。</p>"))
+                display(HTML("<p style='color:gray'>No events detected.</p>"))
