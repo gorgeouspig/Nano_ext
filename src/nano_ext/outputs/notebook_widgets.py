@@ -93,18 +93,30 @@ def make_plotly_figure(result) -> "plotly.graph_objects.Figure":
         name="Baseline",
         hovertemplate="t=%{x:.3f} ms<br>baseline=%{y:.4f} " + units + "<extra></extra>",
     ))
-    fig.add_trace(go.Scatter(
-        x=t, y=baseline + threshold,
-        mode="lines", line=dict(color="#C44E52", width=1.0, dash="dot"),
-        name="Threshold", hoverinfo="skip",
-    ))
-
     from nano_ext.models import EventDirection
-    if result.config.event_direction == EventDirection.BOTH:
+    direction = result.config.event_direction
+    if direction == EventDirection.UP:
+        fig.add_trace(go.Scatter(
+            x=t, y=baseline - threshold,
+            mode="lines", line=dict(color="#8172B2", width=1.0, dash="dot"),
+            name="Threshold", hoverinfo="skip",
+        ))
+    elif direction == EventDirection.BOTH:
+        fig.add_trace(go.Scatter(
+            x=t, y=baseline + threshold,
+            mode="lines", line=dict(color="#C44E52", width=1.0, dash="dot"),
+            name="Threshold (down)", hoverinfo="skip",
+        ))
         fig.add_trace(go.Scatter(
             x=t, y=baseline - threshold,
             mode="lines", line=dict(color="#8172B2", width=1.0, dash="dot"),
             name="Threshold (up)", hoverinfo="skip",
+        ))
+    else:
+        fig.add_trace(go.Scatter(
+            x=t, y=baseline + threshold,
+            mode="lines", line=dict(color="#C44E52", width=1.0, dash="dot"),
+            name="Threshold", hoverinfo="skip",
         ))
 
     _add_event_traces(fig, result, t, units)

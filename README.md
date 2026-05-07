@@ -10,7 +10,7 @@ A Python-based toolkit (with Rust extensions) for extracting ionic current block
 
 ### Waveform Analysis
 
-![Waveform](https://github.com/user-attachments/assets/3930c3ae-69d2-402e-a63b-eb2265cb2874)
+![Waveform](https://github.com/user-attachments/assets/a8aa7c5a-8ea2-4404-bd63-fb56475ebd95)
 
 ## Features
 
@@ -174,7 +174,7 @@ write_sublevels_to_csv(result.events, "sublevels.csv", sr)   # multi-level event
 ### 1. Preprocessing
 - Optional zero-phase low-pass filtering (Bessel or Butterworth, via `sosfiltfilt` with reflection padding)
 - Global detrending (polynomial, linear, or spline) to remove slow drifts
-- Iterative local baseline estimation using a Rust-accelerated sliding-window percentile with event-sample exclusion
+- Two-phase local baseline estimation: early iterations use a high-percentile sliding window (Rust-accelerated) to robustly establish an event mask; a final pass computes the median of the masked open-pore samples, yielding an unbiased estimate of the true open-pore current level
 
 ### 2. Threshold Determination
 - Fit GMM with k = 1 … K components to the baseline-corrected residual

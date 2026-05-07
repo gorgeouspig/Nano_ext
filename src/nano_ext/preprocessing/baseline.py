@@ -119,6 +119,15 @@ def estimate_baseline(
         # We exclude both directions to be safe
         mask = np.abs(residual) < n_sigma * noise_std
 
+    # Final pass: recompute baseline at the median of masked (open-pore) samples.
+    # The iterations above used a high percentile to robustly establish the event
+    # mask; now that the mask is stable, the median is an unbiased estimator of
+    # the true open-pore mean and removes the ~1.3σ upward bias from the high
+    # percentile.
+    local_baseline = _local_baseline_masked(
+        detrended, mask, window_samples, 50.0
+    )
+
     # Final residual
     residual = detrended - local_baseline
 
