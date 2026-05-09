@@ -118,15 +118,23 @@ def estimate_baseline(
         # For "up" events: residual >> 0
         # We exclude both directions to be safe
         mask = np.abs(residual) < n_sigma * noise_std
+        # Guard: if noise_std collapsed (0 / NaN) the new mask will be nearly
+        # empty, which would make the next iteration's baseline catastrophically
+        # wrong (Rust returns 0.0 when no unmasked samples remain).
+        if mask.sum() < max(10, int(0.005 * n_samples)):
+            mask = np.ones(n_samples, dtype=bool)
 
     # Final pass: recompute baseline at the median of masked (open-pore) samples.
     # The iterations above used a high percentile to robustly establish the event
     # mask; now that the mask is stable, the median is an unbiased estimator of
     # the true open-pore mean and removes the ~1.3σ upward bias from the high
     # percentile.
-    local_baseline = _local_baseline_masked(
-        detrended, mask, window_samples, 50.0
-    )
+    # Only apply if the mask is sufficiently populated; a sparse mask means the
+    # iterative estimation failed and we keep the last iteration's baseline.
+    if mask.sum() >= max(10, int(0.005 * n_samples)):
+        local_baseline = _local_baseline_masked(
+            detrended, mask, window_samples, 50.0
+        )
 
     # Final residual
     residual = detrended - local_baseline
@@ -364,6 +372,7 @@ def _estimate_noise(
     float
         Estimated noise standard deviation.
     """
+    residual = residual[np.isfinite(residual)]
     if len(residual) == 0:
         return 1.0  # Fallback
 

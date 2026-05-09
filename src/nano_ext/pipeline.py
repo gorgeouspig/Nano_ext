@@ -75,13 +75,46 @@ class PipelineResult:
 
     def summary(self) -> str:
         """Human-readable summary of pipeline results."""
+        import math
+
+        noise_std = self.baseline_result.noise_std
+        noise_str = (
+            f"{noise_std:.4f}" if math.isfinite(noise_std) else "N/A"
+        )
+
+        # Effective detection threshold: always shown as a positive absolute
+        # deviation from baseline, matching the value used in detect_events.
+        tr = self.threshold_result
+        raw = tr.threshold
+        if tr.baseline_component_idx is not None and tr.component_stds is not None:
+            op_mean = tr.component_means[tr.baseline_component_idx]
+            op_std  = tr.component_stds[tr.baseline_component_idx]
+            eff_down = abs(min(raw, op_mean - 5.0 * op_std))
+            eff_up   = max(abs(raw), op_mean + 5.0 * op_std)
+        else:
+            eff_down = abs(raw)
+            eff_up   = abs(raw)
+
+        direction = self.config.event_direction
+        from nano_ext.models import EventDirection
+        if direction == EventDirection.UP:
+            thr_display = eff_up
+            thr_label = "Threshold (↑): "
+        elif direction == EventDirection.DOWN:
+            thr_display = eff_down
+            thr_label = "Threshold (↓): "
+        else:
+            thr_display = eff_up
+            thr_label = "Threshold (↕): "
+
+        units = self.signal_data.units or ""
         lines = [
             f"Sampling rate:   {self.signal_data.sampling_rate:.0f} Hz",
             f"Duration:        {self.signal_data.duration_sec:.3f} s",
             f"Samples:         {self.signal_data.n_samples}",
-            f"Noise std:       {self.baseline_result.noise_std:.4f} {self.signal_data.units}",
-            f"GMM components:  {self.threshold_result.n_components}",
-            f"Threshold:       {self.threshold_result.threshold:.4f} {self.signal_data.units}",
+            f"Noise std:       {noise_str} {units}",
+            f"GMM components:  {tr.n_components}",
+            f"{thr_label}{thr_display:.4f} {units}",
             f"Events detected: {self.n_events}",
             f"Multi-level:     {self.n_multilevel}",
         ]
@@ -107,6 +140,7 @@ def run_pipeline(
     analyze_sublevel: bool = True,
     verbose: bool = False,
     control_signal: Optional[SignalData] = None,
+    on_step: Optional[callable] = None,
 ) -> PipelineResult:
     """Run the full event detection pipeline.
 
@@ -138,6 +172,8 @@ def run_pipeline(
     signal = signal_data.signal
 
     # ---- Step 1: Low-pass filtering ----
+    if on_step:
+        on_step("Filter signal" if config.apply_filter else "Skip filter (pre-filtered)")
     if verbose:
         logger.info("Filtering signal...")
     from nano_ext.preprocessing.filters import lowpass_filter
@@ -161,6 +197,8 @@ def run_pipeline(
             logger.info(f"  Low-pass filtering skipped. Using pre-applied cutoff: {cutoff:.0f} Hz")
 
     # ---- Step 2: Baseline estimation ----
+    if on_step:
+        on_step("Estimate baseline")
     if verbose:
         logger.info("Estimating baseline...")
     from nano_ext.preprocessing.baseline import estimate_baseline
@@ -201,6 +239,8 @@ def run_pipeline(
         )
 
     # ---- Step 3: Threshold determination ----
+    if on_step:
+        on_step("Determine threshold (GMM)")
     if verbose:
         logger.info("Determining threshold (GMM + BIC)...")
     from nano_ext.detection.threshold import determine_threshold
@@ -218,6 +258,8 @@ def run_pipeline(
         )
 
     # ---- Step 4: Event detection ----
+    if on_step:
+        on_step("Detect events")
     if verbose:
         logger.info("Detecting events...")
     from nano_ext.detection.events import detect_events
@@ -242,6 +284,8 @@ def run_pipeline(
 
     # ---- Step 5: Sub-level analysis ----
     if analyze_sublevel and events:
+        if on_step:
+            on_step("Analyze sub-levels")
         if verbose:
             logger.info("Analyzing sub-levels...")
         from nano_ext.detection.sublevel import analyze_events_sublevels

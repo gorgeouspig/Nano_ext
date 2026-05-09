@@ -11,10 +11,68 @@ Usage (in a Jupyter notebook cell):
 
 from __future__ import annotations
 
+import time
 import traceback
 from pathlib import Path
 
 import numpy as np
+
+
+# ---------------------------------------------------------------------------
+# Progress tracker
+# ---------------------------------------------------------------------------
+
+class _ProgressTracker:
+    """Tracks pipeline step progress and renders live HTML into a widget."""
+
+    _STYLE = (
+        "font-family:monospace;font-size:0.88em;line-height:2.0;"
+        "margin-top:6px"
+    )
+
+    def __init__(self, widget):
+        self.widget = widget
+        self._steps: list[list] = []  # [label, state, elapsed]
+        self._t0: float | None = None
+
+    def start(self, label: str) -> None:
+        """Complete the previous step and begin a new one."""
+        t = time.time()
+        if self._t0 is not None and self._steps:
+            self._steps[-1][1] = "done"
+            self._steps[-1][2] = t - self._t0
+        self._t0 = t
+        self._steps.append([label, "running", None])
+        self._render()
+
+    def finish(self) -> None:
+        """Mark the last step as done."""
+        if self._t0 is not None and self._steps:
+            self._steps[-1][1] = "done"
+            self._steps[-1][2] = time.time() - self._t0
+        self._t0 = None
+        self._render()
+
+    def _render(self) -> None:
+        parts = []
+        for label, state, elapsed in self._steps:
+            if state == "done":
+                parts.append(
+                    f"<div>"
+                    f"<span style='color:green'>✓</span> {label}"
+                    f"<span style='color:#999;font-size:0.85em'> {elapsed:.2f}s</span>"
+                    f"</div>"
+                )
+            else:
+                parts.append(
+                    f"<div>"
+                    f"<span style='color:#0066cc'>⏳</span>"
+                    f" <b>{label}…</b>"
+                    f"</div>"
+                )
+        self.widget.value = (
+            f"<div style='{self._STYLE}'>{''.join(parts)}</div>"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -76,8 +134,22 @@ def make_plotly_figure(result) -> "plotly.graph_objects.Figure":
     t = np.arange(n) / sr * 1000  # ms
 
     baseline = result.baseline_result.local_baseline
-    threshold = result.threshold_result.threshold
     units = result.signal_data.units or "pA"
+
+    # Compute effective thresholds (residual space) matching detect_events logic.
+    # The raw GMM threshold may differ from what events.py actually uses because
+    # detect_events applies a conservative 5σ override.  We mirror that here so
+    # the displayed lines reflect true detection boundaries.
+    tr = result.threshold_result
+    raw_threshold = tr.threshold
+    if tr.baseline_component_idx is not None and tr.component_stds is not None:
+        op_mean = tr.component_means[tr.baseline_component_idx]
+        op_std  = tr.component_stds[tr.baseline_component_idx]
+        eff_down = min(raw_threshold, op_mean - 5.0 * op_std)
+        eff_up   = max(abs(raw_threshold), op_mean + 5.0 * op_std)
+    else:
+        eff_down = raw_threshold
+        eff_up   = abs(raw_threshold)
 
     fig = go.Figure()
 
@@ -97,24 +169,24 @@ def make_plotly_figure(result) -> "plotly.graph_objects.Figure":
     direction = result.config.event_direction
     if direction == EventDirection.UP:
         fig.add_trace(go.Scatter(
-            x=t, y=baseline - threshold,
+            x=t, y=baseline + eff_up,
             mode="lines", line=dict(color="#8172B2", width=1.0, dash="dot"),
             name="Threshold", hoverinfo="skip",
         ))
     elif direction == EventDirection.BOTH:
         fig.add_trace(go.Scatter(
-            x=t, y=baseline + threshold,
+            x=t, y=baseline + eff_down,
             mode="lines", line=dict(color="#C44E52", width=1.0, dash="dot"),
             name="Threshold (down)", hoverinfo="skip",
         ))
         fig.add_trace(go.Scatter(
-            x=t, y=baseline - threshold,
+            x=t, y=baseline + eff_up,
             mode="lines", line=dict(color="#8172B2", width=1.0, dash="dot"),
             name="Threshold (up)", hoverinfo="skip",
         ))
     else:
         fig.add_trace(go.Scatter(
-            x=t, y=baseline + threshold,
+            x=t, y=baseline + eff_down,
             mode="lines", line=dict(color="#C44E52", width=1.0, dash="dot"),
             name="Threshold", hoverinfo="skip",
         ))
@@ -386,11 +458,13 @@ class NanoExtUI:
             layout=widgets.Layout(width="160px", height="36px"),
         )
         self.w_run_status = widgets.HTML("")
+        self.w_progress = widgets.HTML("")
 
         section4 = widgets.VBox([
             widgets.HTML("<h3 style='margin:0 0 6px'>3. Run</h3>"),
             self.w_run_btn,
             self.w_run_status,
+            self.w_progress,
         ], layout=widgets.Layout(border="1px solid #ddd", padding="10px", margin="5px 0"))
 
         # ------------------------------------------------------------------ #
@@ -452,12 +526,31 @@ class NanoExtUI:
             self.w_load_status.value = f"<span style='color:red'>Error: {e}</span>"
 
     def _on_run(self, widgets, display, HTML):
-        self.w_run_status.value = "<span style='color:gray'>Running analysis...</span>"
+        self.w_run_status.value = "<span style='color:gray'>Running…</span>"
+        self.w_progress.value = ""
         self.w_run_btn.disabled = True
+        tracker = _ProgressTracker(self.w_progress)
         try:
-            self._run_pipeline()
+            tracker.start("Load signal")
+            signal_data = self._load_signal(self.w_filechooser.selected)
+
+            self._run_pipeline(signal_data, tracker)
+
+            tracker.start("Build figure")
+            self.w_summary.value = (
+                f"<pre style='background:#f8f8f8;padding:8px;border-radius:4px'>"
+                f"{self._result.summary()}"
+                f"</pre>"
+            )
+            self.w_plot_out.clear_output(wait=True)
+            with self.w_plot_out:
+                make_plotly_figure(self._result).show()
+
+            tracker.start("Build event table")
+            self._render_table(display, HTML)
+
+            tracker.finish()
             self.w_run_status.value = "<span style='color:green'>✓ Done</span>"
-            self._render_results(display, HTML)
             self.w_download_btn.disabled = False
         except Exception:
             tb = traceback.format_exc()
@@ -524,12 +617,11 @@ class NanoExtUI:
                 dtype="float32",
             )
 
-    def _run_pipeline(self):
+    def _run_pipeline(self, signal_data, tracker: _ProgressTracker):
         from nano_ext.pipeline import run_pipeline
         from nano_ext.detection.autotune import suggest_config
         from nano_ext.models import EventDirection
 
-        signal_data = self._load_signal(self.w_filechooser.selected)
         direction = EventDirection(self.w_event_direction.value)
 
         if self.w_auto_tune.value:
@@ -561,22 +653,13 @@ class NanoExtUI:
             analyze_sublevel=True,
             verbose=False,
             control_signal=control_signal,
+            on_step=tracker.start,
         )
 
-    def _render_results(self, display, HTML):
+    def _render_table(self, display, HTML):
         result = self._result
         sr = result.signal_data.sampling_rate
         units = result.signal_data.units or "pA"
-
-        self.w_summary.value = (
-            f"<pre style='background:#f8f8f8;padding:8px;border-radius:4px'>"
-            f"{result.summary()}"
-            f"</pre>"
-        )
-
-        self.w_plot_out.clear_output(wait=True)
-        with self.w_plot_out:
-            make_plotly_figure(result).show()
 
         self.w_table_out.clear_output(wait=True)
         with self.w_table_out:
