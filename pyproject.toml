@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "nano_ext"
-version = "1.0.4"
+version = "1.0.5"
 description = "Brand New Nanopore Signal Extraction — Event detection from nanopore current traces"
 readme = "README.md"
 license = {text = "MIT"}
