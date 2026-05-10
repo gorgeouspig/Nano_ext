@@ -187,6 +187,21 @@ def main(verbose):
     ),
 )
 @click.option(
+    "--hmm",
+    "hmm_analysis",
+    is_flag=True,
+    help=(
+        "Fit a Gaussian HMM to each detected event after sub-level analysis. "
+        'Requires:  pip install "nano_ext[hmm]"'
+    ),
+)
+@click.option(
+    "--hmm-max-states",
+    type=int,
+    default=5,
+    help="Maximum number of HMM states to test per event (BIC selects the best).",
+)
+@click.option(
     "--plot",
     is_flag=True,
     help="Generate and save a plot of the analysis result.",
@@ -218,6 +233,8 @@ def analyze(
     control_path,
     analysis_range,
     exclude_ranges,
+    hmm_analysis,
+    hmm_max_states,
     plot,
 ):
     """Analyze a nanopore data file to detect events."""
@@ -273,6 +290,8 @@ def analyze(
             max_sublevel_depth=max_sublevel_depth,
             gmm_max_samples=gmm_max_samples,
         )
+    config.hmm_analysis = hmm_analysis
+    config.hmm_max_states = hmm_max_states
 
     if analysis_range is not None and exclude_ranges:
         raise click.UsageError("--analysis-range and --exclude-range cannot be combined.")
@@ -314,6 +333,118 @@ def analyze(
         logger.error(f"Error during analysis: {e}", exc_info=True)
         click.echo(f"Error: {e}")
         exit(1)
+
+@main.command()
+@click.argument("filepath", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--output-dir", "-o",
+    type=click.Path(file_okay=False),
+    default=".",
+    help="Directory to save output files.",
+)
+@click.option(
+    "--file-format",
+    type=click.Choice(["abf", "binary"]),
+    help="Input file format. Auto-detected from extension if not specified.",
+)
+@click.option("--channel", type=int, default=0, help="Channel number for ABF files.")
+@click.option("--sampling-rate", type=float, help="Sampling rate in Hz (binary files only).")
+@click.option("--dtype", type=str, default="float32", help="Data type for binary files.")
+@click.option(
+    "--control",
+    "control_path",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="Analyte-free control file for overlaid comparison.",
+)
+@click.option(
+    "--segment-sec",
+    type=float,
+    default=1.0,
+    help="Welch segment length in seconds.",
+)
+@click.option("--plot", is_flag=True, help="Save a PNG of the PSD plot.")
+def spectrum(
+    filepath,
+    output_dir,
+    file_format,
+    channel,
+    sampling_rate,
+    dtype,
+    control_path,
+    segment_sec,
+    plot,
+):
+    """Compute and display the Power Spectral Density of a recording."""
+    from nano_ext.analysis.spectrum import compute_psd, make_psd_figure
+
+    filepath = Path(filepath)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Load signal
+    if file_format is None:
+        file_format = "abf" if filepath.suffix.lower() == ".abf" else "binary"
+    if file_format == "abf":
+        from nano_ext.io.abf_reader import read_abf
+        signal_data = read_abf(str(filepath), channel=channel)
+    else:
+        if sampling_rate is None:
+            raise click.UsageError("--sampling-rate is required for binary files.")
+        from nano_ext.io.binary_reader import read_binary
+        signal_data = read_binary(str(filepath), sampling_rate=sampling_rate, dtype=dtype)
+
+    click.echo(f"Computing PSD for {filepath.name} ...")
+    psd = compute_psd(signal_data, segment_sec=segment_sec)
+
+    # Load and compute control PSD if provided
+    ctrl_psd = None
+    if control_path is not None:
+        ctrl_path = Path(control_path)
+        ctrl_fmt = "abf" if ctrl_path.suffix.lower() == ".abf" else "binary"
+        if ctrl_fmt == "abf":
+            from nano_ext.io.abf_reader import read_abf
+            ctrl_data = read_abf(str(ctrl_path), channel=channel)
+        else:
+            if sampling_rate is None:
+                raise click.UsageError("--sampling-rate is required for binary control files.")
+            from nano_ext.io.binary_reader import read_binary
+            ctrl_data = read_binary(str(ctrl_path), sampling_rate=sampling_rate, dtype=dtype)
+        ctrl_psd = compute_psd(ctrl_data, segment_sec=segment_sec)
+        click.echo(f"Control: {ctrl_path.name}")
+
+    click.echo(f"Sampling rate:  {signal_data.sampling_rate:.0f} Hz")
+    click.echo(f"Duration:       {signal_data.duration_sec:.3f} s")
+    click.echo(f"PSD units:      {psd.units}")
+    if psd.f_3db_estimate is not None:
+        click.echo(f"Est. -3 dB cutoff: {psd.f_3db_estimate:.1f} Hz")
+    else:
+        click.echo("Est. -3 dB cutoff: not detected")
+
+    if plot:
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots(figsize=(8, 4))
+        mask = (psd.frequencies > 0) & (psd.psd > 0)
+        ax.loglog(psd.frequencies[mask], psd.psd[mask], label="Sample", color="#4C72B0")
+        if ctrl_psd is not None:
+            cm = (ctrl_psd.frequencies > 0) & (ctrl_psd.psd > 0)
+            ax.loglog(ctrl_psd.frequencies[cm], ctrl_psd.psd[cm],
+                      label="Control", color="#DD8452", linestyle="--")
+        if psd.f_3db_estimate is not None:
+            ax.axvline(psd.f_3db_estimate, color="#C44E52", linestyle=":",
+                       label=f"-3 dB ≈ {psd.f_3db_estimate:.0f} Hz")
+        ax.set_xlabel("Frequency (Hz)")
+        ax.set_ylabel(psd.units)
+        ax.set_title("Power Spectral Density")
+        ax.legend()
+        ax.grid(True, which="both", ls=":", alpha=0.4)
+        fig.tight_layout()
+        plot_path = output_dir / f"{filepath.stem}_psd.png"
+        fig.savefig(plot_path, dpi=150)
+        plt.close(fig)
+        click.echo(f"PSD plot saved to {plot_path}")
+
 
 if __name__ == "__main__":
     main()

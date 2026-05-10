@@ -35,6 +35,9 @@ notebook = [
     "ipyfilechooser>=0.6",
     "nbformat>=4.2.0",
 ]
+hmm = [
+    "hmmlearn>=0.3",
+]
 
 [project.scripts]
 nano-ext = "nano_ext.cli:main"

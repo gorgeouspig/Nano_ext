@@ -353,6 +353,23 @@ def run_pipeline(
         if verbose:
             logger.info(f"  Multi-level events: {n_multi}")
 
+    # ---- Step 5b: HMM analysis (optional) ----
+    if config.hmm_analysis and events:
+        if on_step:
+            on_step("HMM analysis")
+        if verbose:
+            logger.info("Running HMM analysis on events...")
+        from nano_ext.detection.hmm import analyze_events_hmm
+        events = analyze_events_hmm(
+            events=events,
+            filtered_signal=filtered,
+            sampling_rate=sr,
+            max_states=config.hmm_max_states,
+        )
+        n_hmm = sum(1 for ev in events if ev.hmm_result is not None)
+        if verbose:
+            logger.info(f"  HMM fitted: {n_hmm}/{len(events)} events")
+
     # ---- Restore timestamps to original-file coordinates ----
     if _idx_map is not None:
         from nano_ext.preprocessing.segments import restore_event_timestamps_mapped

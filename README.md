@@ -24,6 +24,9 @@ A Python-based toolkit (with Rust extensions) for extracting ionic current block
 - **High Performance**: Rust extensions (PyO3/maturin) accelerate the sliding-window baseline percentile and PELT change-point kernels by 5–34×.
 - **Flexible Input**: Supports Axon Binary Format (ABF) and raw binary data.
 - **Interactive Jupyter UI**: `notebooks/interactive_analysis.ipynb` provides a widget-based GUI for interactive parameter exploration and result inspection — no terminal required during analysis.
+- **Per-Event Waveform Viewer**: Browse individual events with zoomed two-panel figures (signal + residual + sublevel boundaries). Export any event's waveform as `.npz` or `.csv` for downstream ML workflows.
+- **HMM Multi-state Analysis**: Gaussian HMM fitting per event with BIC-based state-count selection. Reports state means, transition matrix, and dwell-time distributions. Enable with `--hmm` (requires `pip install "nano_ext[hmm]"`).
+- **Power Spectral Density**: Welch-method PSD for noise diagnostics and effective filter-cutoff estimation. Compare sample vs. control with `nano-ext spectrum` or the Diagnostics panel in the Jupyter UI.
 - **Comprehensive Output**: Per-event CSV summaries, per-sub-level CSV (joinable via `event_id`), and interactive plotly visualisations.
 
 ## Installation
@@ -208,14 +211,29 @@ write_sublevels_to_csv(result.events, "sublevels.csv", sr)   # multi-level event
 
 ```python
 from nano_ext.outputs.visualize import plot_pipeline_result
+from nano_ext.outputs.event_viewer import make_event_figure, make_event_grid, dump_event_waveform
+from nano_ext.analysis.spectrum import compute_psd, make_psd_figure
 
-plot_pipeline_result(result, "analysis.png")   # save static matplotlib figure
+plot_pipeline_result(result, "analysis.png")   # static matplotlib overview
+
+# Per-event figures (plotly, Jupyter-ready)
+make_event_figure(result, event_index=0).show()   # zoom into event #1
+make_event_grid(result, n_cols=3, max_events=9).show()   # side-by-side grid
+
+# Export event waveform for downstream ML
+dump_event_waveform(result, event_index=0, path="event_0.npz")
+
+# Power spectral density
+psd = compute_psd(result.signal_data)
+make_psd_figure(psd).show()
 ```
 
 The interactive plotly waveform (available in the Jupyter UI) shows:
 - Filtered signal with pan/zoom/scroll
 - Local baseline and threshold overlays
 - Per-event shading with hover tooltips (event index, depth, duration)
+- Event Browser: per-event zoom with IntSlider and grid-view toggle
+- Diagnostics: PSD plot with optional control overlay
 
 ## Testing
 

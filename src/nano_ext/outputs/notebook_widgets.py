@@ -254,6 +254,7 @@ class NanoExtUI:
     def __init__(self):
         self._result = None
         self._signal_data = None  # cached after Load
+        self._display = None      # IPython display function, set in _build
 
     def display(self):
         """Render the full UI in the current Jupyter cell output."""
@@ -261,6 +262,7 @@ class NanoExtUI:
         self._build(widgets, display, HTML)
 
     def _build(self, widgets, display, HTML):
+        self._display = display
         FileChooser = _require_filechooser()
 
         # ------------------------------------------------------------------ #
@@ -637,13 +639,94 @@ class NanoExtUI:
         )
         self.w_download_status = widgets.HTML("")
 
+        # --- Event Browser subsection ---
+        self.w_event_slider = widgets.IntSlider(
+            value=1, min=1, max=1, step=1,
+            description="Event #:",
+            layout=widgets.Layout(width="420px"),
+            style={"description_width": "80px"},
+        )
+        self.w_event_grid_btn = widgets.ToggleButton(
+            value=False,
+            description="Grid view",
+            icon="th",
+            layout=widgets.Layout(width="130px"),
+            button_style="",
+        )
+        self.w_event_view_out = widgets.Output()
+        self.w_event_export_btn = widgets.Button(
+            description="Export waveform (NPZ)",
+            button_style="",
+            icon="download",
+            layout=widgets.Layout(width="210px"),
+            disabled=True,
+        )
+        self.w_event_export_status = widgets.HTML("")
+
+        def _on_event_slider(change):
+            self._refresh_event_view()
+        self.w_event_slider.observe(_on_event_slider, names="value")
+
+        def _on_event_grid_toggle(change):
+            self._refresh_event_view()
+        self.w_event_grid_btn.observe(_on_event_grid_toggle, names="value")
+
+        self.w_event_export_btn.on_click(lambda _: self._on_event_export())
+
+        event_browser_box = widgets.VBox([
+            widgets.HTML(
+                "<b style='display:block;margin-top:10px'>Event Browser</b>"
+                "<p style='color:#555;font-size:0.88em;margin:2px 0 6px'>"
+                "Zoom in on individual events. Select event number below, "
+                "or toggle grid view for side-by-side comparison.</p>"
+            ),
+            widgets.HBox([self.w_event_slider, self.w_event_grid_btn]),
+            self.w_event_view_out,
+            widgets.HBox([self.w_event_export_btn, self.w_event_export_status]),
+        ])
+
         section6 = widgets.VBox([
             widgets.HTML("<h3 style='margin:0 0 6px'>6. Results</h3>"),
             self.w_summary,
             self.w_plot_out,
             self.w_table_out,
             widgets.HBox([self.w_download_btn, self.w_download_status]),
+            widgets.HTML("<hr style='margin:10px 0'>"),
+            event_browser_box,
         ], layout=widgets.Layout(border="1px solid #ddd", padding="10px", margin="5px 0"))
+
+        # ------------------------------------------------------------------ #
+        # Section 7: Diagnostics (collapsed accordion)
+        # ------------------------------------------------------------------ #
+        self.w_psd_btn = widgets.Button(
+            description="Show power spectrum",
+            button_style="",
+            icon="bar-chart",
+            layout=widgets.Layout(width="220px"),
+        )
+        self.w_psd_out = widgets.Output()
+
+        def _on_psd(_):
+            self._on_psd()
+        self.w_psd_btn.on_click(_on_psd)
+
+        diag_box = widgets.VBox([
+            widgets.HTML(
+                "<p style='color:#555;font-size:0.88em;margin:4px 0 8px'>"
+                "Power Spectral Density (Welch's method) — diagnose noise shape and "
+                "effective filter cutoff. Load a signal file first.</p>"
+            ),
+            self.w_psd_btn,
+            self.w_psd_out,
+        ], layout=widgets.Layout(padding="8px"))
+        diag_accordion = widgets.Accordion(children=[diag_box])
+        diag_accordion.set_title(0, "Diagnostics")
+        diag_accordion.selected_index = None
+
+        section7 = widgets.VBox(
+            [diag_accordion],
+            layout=widgets.Layout(margin="5px 0"),
+        )
 
         # ------------------------------------------------------------------ #
         # Wire up callbacks
@@ -652,7 +735,7 @@ class NanoExtUI:
         self.w_run_btn.on_click(lambda _: self._on_run(widgets, display, HTML))
         self.w_download_btn.on_click(lambda _: self._on_download(display, HTML))
 
-        display(widgets.VBox([section1, section2, section3, section4, section5, section6]))
+        display(widgets.VBox([section1, section2, section3, section4, section5, section6, section7]))
 
     # ------------------------------------------------------------------ #
     # Callbacks
@@ -767,6 +850,17 @@ class NanoExtUI:
 
             tracker.start("Build event table")
             self._render_table(display, HTML)
+
+            # Update event browser
+            n_ev = self._result.n_events
+            if n_ev > 0:
+                self.w_event_slider.max = n_ev
+                self.w_event_slider.value = 1
+                self.w_event_export_btn.disabled = False
+                self._refresh_event_view()
+            else:
+                self.w_event_view_out.clear_output()
+                self.w_event_export_btn.disabled = True
 
             tracker.finish()
             self.w_run_status.value = "<span style='color:green'>✓ Done</span>"
@@ -892,6 +986,62 @@ class NanoExtUI:
             analysis_range=analysis_range,
             exclude_ranges=exclude_ranges,
         )
+
+    def _refresh_event_view(self):
+        """Redraw the event viewer panel (single event or grid)."""
+        if self._result is None or not self._result.events:
+            return
+        from nano_ext.outputs.event_viewer import make_event_figure, make_event_grid
+        self.w_event_view_out.clear_output(wait=True)
+        with self.w_event_view_out:
+            if self.w_event_grid_btn.value:
+                make_event_grid(self._result).show()
+            else:
+                idx = self.w_event_slider.value - 1  # 0-based
+                make_event_figure(self._result, idx).show()
+
+    def _on_event_export(self):
+        """Export the currently viewed event waveform as an NPZ download link."""
+        if self._result is None or not self._result.events:
+            return
+        idx = self.w_event_slider.value - 1
+        import base64, io, tempfile
+        from pathlib import Path as _Path
+        from nano_ext.outputs.event_viewer import dump_event_waveform
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = _Path(tmp) / f"event_{idx + 1}.npz"
+            dump_event_waveform(self._result, idx, out_path, fmt="npz")
+            data = out_path.read_bytes()
+        b64 = base64.b64encode(data).decode()
+        fname = f"event_{idx + 1}.npz"
+        self.w_event_export_status.value = (
+            f'<a download="{fname}" href="data:application/octet-stream;base64,{b64}" '
+            f'style="text-decoration:none">'
+            f'<button style="padding:4px 12px">⬇ {fname}</button></a>'
+        )
+
+    def _on_psd(self):
+        """Compute and display the PSD for the loaded signal."""
+        from nano_ext.analysis.spectrum import compute_psd, make_psd_figure
+        sd = self._signal_data
+        if sd is None:
+            self.w_psd_out.clear_output(wait=True)
+            with self.w_psd_out:
+                import ipywidgets as _w
+                _w.HTML("<span style='color:gray'>Load a signal file first.</span>")
+            return
+        ctrl_psd = None
+        ctrl_path = self.w_control_chooser.selected
+        if ctrl_path:
+            try:
+                ctrl_data = self._load_signal(ctrl_path)
+                ctrl_psd = compute_psd(ctrl_data)
+            except Exception:
+                pass
+        psd = compute_psd(sd)
+        self.w_psd_out.clear_output(wait=True)
+        with self.w_psd_out:
+            make_psd_figure(psd, ctrl_psd).show()
 
     def _render_table(self, display, HTML):
         result = self._result

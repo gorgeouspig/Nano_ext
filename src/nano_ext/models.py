@@ -95,6 +95,43 @@ class SubLevel:
 
 
 @dataclass
+class HMMResult:
+    """Result of Gaussian HMM fitting to a single event.
+
+    Produced by :func:`~nano_ext.detection.hmm.fit_hmm_event` when
+    ``DetectionConfig.hmm_analysis`` is True.
+
+    Attributes
+    ----------
+    n_states : int
+        Number of hidden states selected by BIC.
+    state_means : np.ndarray
+        Mean current of each state.
+    state_stds : np.ndarray
+        Standard deviation of each state.
+    transition_matrix : np.ndarray
+        k × k row-stochastic transition probability matrix.
+    state_sequence : np.ndarray
+        Viterbi-decoded state index for every sample in the event.
+    dwell_times_s : list of np.ndarray
+        Per-state arrays of consecutive dwell durations (seconds).
+    log_likelihood : float
+        Total log-likelihood of the fitted model.
+    bic : float
+        BIC score (lower is better).
+    """
+
+    n_states: int
+    state_means: np.ndarray
+    state_stds: np.ndarray
+    transition_matrix: np.ndarray
+    state_sequence: np.ndarray
+    dwell_times_s: list
+    log_likelihood: float
+    bic: float
+
+
+@dataclass
 class Event:
     """A detected nanopore event representing a significant deviation from baseline current.
     
@@ -154,6 +191,7 @@ class Event:
     sublevels: list[SubLevel] = field(default_factory=list)
     event_type: EventType = EventType.SINGLE
     direction: EventDirection = EventDirection.DOWN
+    hmm_result: Optional[HMMResult] = None
 
     @property
     def is_multilevel(self) -> bool:
@@ -356,6 +394,10 @@ class DetectionConfig:
     # --- Sublevel analysis ---
     min_segment_samples: int = 50
     max_sublevel_depth: int = 5
+
+    # --- HMM analysis ---
+    hmm_analysis: bool = False
+    hmm_max_states: int = 5
 
     # --- Noise estimation ---
     noise_estimation: str = "mad"
