@@ -162,6 +162,31 @@ def main(verbose):
     help="Path to a negative control (analyte-free) file for noise characterisation.",
 )
 @click.option(
+    "--analysis-range",
+    "analysis_range",
+    nargs=2,
+    type=float,
+    default=None,
+    metavar="START END",
+    help=(
+        "Restrict analysis to a single time window [START, END) in seconds. "
+        "Cannot be combined with --exclude-range."
+    ),
+)
+@click.option(
+    "--exclude-range",
+    "exclude_ranges",
+    nargs=2,
+    type=float,
+    multiple=True,
+    metavar="START END",
+    help=(
+        "Exclude an artifact window [START, END) in seconds from analysis. "
+        "May be specified multiple times for multiple artifact regions. "
+        "Cannot be combined with --analysis-range."
+    ),
+)
+@click.option(
     "--plot",
     is_flag=True,
     help="Generate and save a plot of the analysis result.",
@@ -191,6 +216,8 @@ def analyze(
     gmm_max_samples,
     auto_tune,
     control_path,
+    analysis_range,
+    exclude_ranges,
     plot,
 ):
     """Analyze a nanopore data file to detect events."""
@@ -247,7 +274,15 @@ def analyze(
             gmm_max_samples=gmm_max_samples,
         )
 
+    if analysis_range is not None and exclude_ranges:
+        raise click.UsageError("--analysis-range and --exclude-range cannot be combined.")
+
     click.echo(f"Analyzing {filepath.name}...")
+    if analysis_range is not None:
+        click.echo(f"  Analysis range: [{analysis_range[0]:.3f}, {analysis_range[1]:.3f}) s")
+    if exclude_ranges:
+        for t0, t1 in exclude_ranges:
+            click.echo(f"  Exclude range: [{t0:.3f}, {t1:.3f}) s")
     try:
         result = process_file(
             filepath=filepath,
@@ -259,6 +294,8 @@ def analyze(
             analyze_sublevel=not no_sublevel_analysis,
             verbose=True,
             control_path=control_path,
+            analysis_range=tuple(analysis_range) if analysis_range is not None else None,
+            exclude_ranges=[tuple(r) for r in exclude_ranges] if exclude_ranges else None,
         )
         click.echo(result.summary())
 

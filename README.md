@@ -20,6 +20,7 @@ A Python-based toolkit (with Rust extensions) for extracting ionic current block
 - **Multi-directional Detection**: Detect downward blockades, upward deflections, or both simultaneously. Each event is tagged with its direction.
 - **Automated Parameter Tuning**: `suggest_config()` estimates the noise floor from the signal and automatically sets `min_event_duration`, `merge_gap`, and `baseline_window` — a good starting point before manual refinement.
 - **Negative Control Integration**: Pass an analyte-free control recording to derive a clean noise estimate, stabilising threshold determination when the sample trace is event-dense.
+- **Artifact Exclusion**: Exclude one or more artifact regions (e.g. from zapping operations) from all estimation steps via `--analysis-range START END` (single keep-window) or `--exclude-range START END` (one or more exclusion windows). Event timestamps in the output remain in original-file coordinates.
 - **High Performance**: Rust extensions (PyO3/maturin) accelerate the sliding-window baseline percentile and PELT change-point kernels by 5–34×.
 - **Flexible Input**: Supports Axon Binary Format (ABF) and raw binary data.
 - **Interactive Jupyter UI**: `notebooks/interactive_analysis.ipynb` provides a widget-based GUI for interactive parameter exploration and result inspection — no terminal required during analysis.
@@ -74,12 +75,13 @@ conda activate nano_ext
 jupyter notebook notebooks/interactive_analysis.ipynb
 ```
 
-The UI guides you through four sections:
+The UI guides you through five sections:
 
 1. **File Loading** — select signal and optional control files via a file browser
-2. **Analysis Settings** — choose event direction (Down / Up) and enable Auto-tune
-3. **Additional Settings** *(collapsed by default)* — preprocessing filters and advanced detection parameters, each with explanations
-4. **Run → Results** — interactive waveform with event shading, event table, and CSV download
+2. **Analysis Range** *(collapsed by default)* — restrict analysis to a time window; a preview button shows the full signal with the selected range highlighted
+3. **Analysis Settings** — choose event direction (Down / Up) and enable Auto-tune
+4. **Additional Settings** *(collapsed by default)* — preprocessing filters and advanced detection parameters, each with explanations
+5. **Run → Results** — interactive waveform with event shading, event table, and CSV download
 
 ### Command Line Interface
 
@@ -92,6 +94,16 @@ nano-ext analyze recording.abf -o ./results --event-direction up
 
 # Use a negative control trace for a cleaner noise estimate
 nano-ext analyze sample.abf -o ./results --control control.abf --auto-tune
+
+# Exclude an artifact region (zapping at t=2–3 s); rest of recording is analysed
+nano-ext analyze recording.abf -o ./results --exclude-range 2.0 3.0 --auto-tune
+
+# Multiple artifact regions
+nano-ext analyze recording.abf -o ./results \
+    --exclude-range 2.0 3.0 --exclude-range 7.5 8.0 --auto-tune
+
+# Alternatively, restrict to a specific clean window
+nano-ext analyze recording.abf -o ./results --analysis-range 3.0 10.0 --auto-tune
 
 # Pre-filtered data — skip the built-in filter
 nano-ext analyze recording.abf -o ./results --no-filter --pre-filter-cutoff 10000

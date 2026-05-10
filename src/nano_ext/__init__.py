@@ -40,6 +40,14 @@ from .outputs.csv_writer import write_events_to_csv
 from .outputs.visualize import plot_pipeline_result
 from .detection.autotune import suggest_config, estimate_noise_floor
 from .preprocessing.control import ControlStats, compute_control_stats
+from .preprocessing.segments import (
+    crop_signal_to_range,
+    restore_event_timestamps,
+    build_keep_ranges,
+    concatenate_signal_ranges,
+    restore_event_timestamps_mapped,
+    insert_nan_at_gaps,
+)
 
 from ._nano_ext import pelt, local_baseline_percentile
 
@@ -65,6 +73,13 @@ __all__ = [
     # Negative control
     "ControlStats",
     "compute_control_stats",
+    # Analysis range / artifact exclusion
+    "crop_signal_to_range",
+    "restore_event_timestamps",
+    "build_keep_ranges",
+    "concatenate_signal_ranges",
+    "restore_event_timestamps_mapped",
+    "insert_nan_at_gaps",
     # Output helpers
     "write_events_to_csv",
     "plot_pipeline_result",

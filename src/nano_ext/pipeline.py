@@ -141,6 +141,8 @@ def run_pipeline(
     verbose: bool = False,
     control_signal: Optional[SignalData] = None,
     on_step: Optional[callable] = None,
+    analysis_range: Optional[tuple] = None,
+    exclude_ranges: Optional[list] = None,
 ) -> PipelineResult:
     """Run the full event detection pipeline.
 
@@ -159,6 +161,17 @@ def run_pipeline(
         noise standard deviation replaces the sample-derived estimate,
         giving a cleaner noise floor when the sample is event-dense.
         The control must have the same sampling rate as *signal_data*.
+    analysis_range : tuple[float, float], optional
+        ``(t_start, t_end)`` in seconds — single keep-window.  Only the
+        signal in this window is analysed.  Event timestamps in the output
+        are in original-file coordinates.  Cannot be combined with
+        *exclude_ranges*.
+    exclude_ranges : list[tuple[float, float]], optional
+        Artifact windows to **exclude**, each as ``(t_start, t_end)`` in
+        seconds.  The complement (all remaining segments) is concatenated
+        and analysed as a single signal, giving stable GMM/baseline/noise
+        estimates.  Event timestamps are in original-file coordinates.
+        Cannot be combined with *analysis_range*.
 
     Returns
     -------
@@ -167,6 +180,43 @@ def run_pipeline(
     """
     if config is None:
         config = DetectionConfig()
+
+    if analysis_range is not None and exclude_ranges is not None:
+        raise ValueError(
+            "analysis_range and exclude_ranges are mutually exclusive — use one or the other."
+        )
+
+    # ---- Optional: restrict signal to keep-ranges ----
+    _idx_map: Optional[np.ndarray] = None  # used for multi-range timestamp restoration
+
+    if analysis_range is not None:
+        t_start, t_end = analysis_range
+        from nano_ext.preprocessing.segments import crop_signal_to_range
+        signal_data, _sample_offset = crop_signal_to_range(signal_data, t_start, t_end)
+        if verbose:
+            logger.info(
+                f"  Analysis range: [{t_start:.3f}, {t_end:.3f}) s "
+                f"→ {signal_data.n_samples} samples"
+            )
+        # For single-range we use the simpler offset path (no idx_map needed)
+        _single_offset: int = _sample_offset
+    elif exclude_ranges is not None and len(exclude_ranges) > 0:
+        from nano_ext.preprocessing.segments import (
+            build_keep_ranges,
+            concatenate_signal_ranges,
+        )
+        keep = build_keep_ranges(signal_data.duration_sec, exclude_ranges)
+        if verbose:
+            logger.info(
+                f"  Exclude ranges: {len(exclude_ranges)} window(s) → "
+                f"{len(keep)} keep segment(s)"
+            )
+        signal_data, _idx_map = concatenate_signal_ranges(signal_data, keep)
+        _single_offset = 0
+        if verbose:
+            logger.info(f"  Concatenated signal: {signal_data.n_samples} samples")
+    else:
+        _single_offset = 0
 
     sr = signal_data.sampling_rate
     signal = signal_data.signal
@@ -303,6 +353,14 @@ def run_pipeline(
         if verbose:
             logger.info(f"  Multi-level events: {n_multi}")
 
+    # ---- Restore timestamps to original-file coordinates ----
+    if _idx_map is not None:
+        from nano_ext.preprocessing.segments import restore_event_timestamps_mapped
+        events = restore_event_timestamps_mapped(events, _idx_map, sr)
+    elif _single_offset > 0:
+        from nano_ext.preprocessing.segments import restore_event_timestamps
+        events = restore_event_timestamps(events, _single_offset, sr)
+
     return PipelineResult(
         signal_data=signal_data,
         filtered_signal=filtered,
@@ -327,6 +385,8 @@ def process_file(
     analyze_sublevel: bool = True,
     verbose: bool = False,
     control_path: Optional[Union[str, Path]] = None,
+    analysis_range: Optional[tuple] = None,
+    exclude_ranges: Optional[list] = None,
 ) -> PipelineResult:
     """Load a file and run the full pipeline.
 
@@ -353,6 +413,13 @@ def process_file(
         Path to a negative control file (same format as *filepath*).
         When provided, the control's noise estimate is used to stabilise
         threshold determination.
+    analysis_range : tuple[float, float], optional
+        ``(t_start, t_end)`` in seconds — single keep-window.  Cannot
+        be combined with *exclude_ranges*.
+    exclude_ranges : list[tuple[float, float]], optional
+        Artifact windows to exclude, each as ``(t_start, t_end)`` in
+        seconds.  The complement is analysed as a concatenated signal.
+        Cannot be combined with *analysis_range*.
 
     Returns
     -------
@@ -416,4 +483,6 @@ def process_file(
         analyze_sublevel=analyze_sublevel,
         verbose=verbose,
         control_signal=control_signal,
+        analysis_range=analysis_range,
+        exclude_ranges=exclude_ranges,
     )

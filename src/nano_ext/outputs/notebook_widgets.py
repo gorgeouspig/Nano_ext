@@ -130,10 +130,26 @@ def make_plotly_figure(result) -> "plotly.graph_objects.Figure":
     go, _ = _require_plotly()
 
     sr = result.signal_data.sampling_rate
-    n = len(result.filtered_signal)
-    t = np.arange(n) / sr * 1000  # ms
+    # Use the signal_data.time array so that cropped / multi-range recordings
+    # show absolute original-file timestamps on the x-axis.
+    t_raw = result.signal_data.time  # seconds
 
-    baseline = result.baseline_result.local_baseline
+    # When multiple ranges are concatenated there are jumps in the time axis.
+    # Insert NaN at boundaries so Plotly does not draw connecting lines.
+    boundaries = result.signal_data.metadata.get("_range_boundaries", [])
+    if boundaries:
+        from nano_ext.preprocessing.segments import insert_nan_at_gaps
+        signal_plot = insert_nan_at_gaps(result.filtered_signal, boundaries)
+        baseline_plot = insert_nan_at_gaps(result.baseline_result.local_baseline, boundaries)
+        # Build time array with NaN inserted at same positions
+        t_plot = insert_nan_at_gaps(t_raw, boundaries) * 1000  # ms
+    else:
+        signal_plot = result.filtered_signal.astype(np.float64)
+        baseline_plot = result.baseline_result.local_baseline
+        t_plot = t_raw * 1000  # ms
+
+    t = t_plot  # alias for the rest of the function
+    baseline = baseline_plot
     units = result.signal_data.units or "pA"
 
     # Compute effective thresholds (residual space) matching detect_events logic.
@@ -154,13 +170,13 @@ def make_plotly_figure(result) -> "plotly.graph_objects.Figure":
     fig = go.Figure()
 
     fig.add_trace(go.Scatter(
-        x=t, y=result.filtered_signal,
+        x=t, y=signal_plot,
         mode="lines", line=dict(color="#4C72B0", width=0.8),
         name="Filtered signal",
         hovertemplate="t=%{x:.3f} ms<br>I=%{y:.4f} " + units + "<extra></extra>",
     ))
     fig.add_trace(go.Scatter(
-        x=t, y=baseline,
+        x=t, y=baseline_plot,
         mode="lines", line=dict(color="#DD8452", width=1.2, dash="dash"),
         name="Baseline",
         hovertemplate="t=%{x:.3f} ms<br>baseline=%{y:.4f} " + units + "<extra></extra>",
@@ -237,6 +253,7 @@ class NanoExtUI:
 
     def __init__(self):
         self._result = None
+        self._signal_data = None  # cached after Load
 
     def display(self):
         """Render the full UI in the current Jupyter cell output."""
@@ -298,7 +315,145 @@ class NanoExtUI:
         ], layout=widgets.Layout(border="1px solid #ddd", padding="10px", margin="5px 0"))
 
         # ------------------------------------------------------------------ #
-        # Section 2: Core Settings (always visible)
+        # Section 2: Analysis Range (optional, collapsed by default)
+        # ------------------------------------------------------------------ #
+
+        # --- Mode toggle ---
+        self.w_range_mode = widgets.ToggleButtons(
+            options=[("No restriction", "none"),
+                     ("Keep range", "keep"),
+                     ("Exclude ranges", "exclude")],
+            value="none",
+            description="",
+            layout=widgets.Layout(width="auto"),
+            style={"button_width": "140px"},
+        )
+
+        # --- Keep-range widgets (Stage 1) ---
+        self.w_t_start = widgets.BoundedFloatText(
+            value=0.0, min=0.0, max=1e9, step=0.01,
+            description="Start (s):",
+            layout=widgets.Layout(width="220px"),
+            style={"description_width": "75px"},
+        )
+        self.w_t_end = widgets.BoundedFloatText(
+            value=10.0, min=0.0, max=1e9, step=0.01,
+            description="End (s):",
+            layout=widgets.Layout(width="220px"),
+            style={"description_width": "75px"},
+        )
+        self.w_keep_box = widgets.VBox([
+            widgets.HBox([self.w_t_start, self.w_t_end]),
+            _hint("Analyse only the signal between Start and End; "
+                  "everything outside is ignored."),
+        ])
+
+        # --- Exclude-range widgets (Stage 2) ---
+        self._exclude_rows: list = []  # list of (w_t0, w_t1, w_rm) tuples
+        self.w_exclude_list = widgets.VBox([])   # dynamic row container
+        self.w_add_exclude_btn = widgets.Button(
+            description="+ Add artifact region",
+            button_style="",
+            layout=widgets.Layout(width="200px"),
+        )
+        self.w_exclude_box = widgets.VBox([
+            _hint("Specify artifact windows to exclude (e.g. zapping regions). "
+                  "All remaining signal is concatenated and analysed as one."),
+            self.w_exclude_list,
+            self.w_add_exclude_btn,
+        ])
+
+        def _add_exclude_row(_=None):
+            w_t0 = widgets.BoundedFloatText(
+                value=0.0, min=0.0, max=1e9, step=0.01,
+                description="Start (s):",
+                layout=widgets.Layout(width="220px"),
+                style={"description_width": "75px"},
+            )
+            w_t1 = widgets.BoundedFloatText(
+                value=1.0, min=0.0, max=1e9, step=0.01,
+                description="End (s):",
+                layout=widgets.Layout(width="220px"),
+                style={"description_width": "75px"},
+            )
+            row_ref = [None]  # mutable container for the row widget
+
+            def _remove(_):
+                idx = next(
+                    (i for i, r in enumerate(self._exclude_rows) if r[0] is w_t0), None
+                )
+                if idx is not None:
+                    self._exclude_rows.pop(idx)
+                    self.w_exclude_list.children = [
+                        r[3] for r in self._exclude_rows
+                    ]
+
+            w_rm = widgets.Button(
+                description="✕",
+                button_style="danger",
+                layout=widgets.Layout(width="40px"),
+            )
+            w_rm.on_click(_remove)
+            row = widgets.HBox([w_t0, w_t1, w_rm])
+            row_ref[0] = row
+            self._exclude_rows.append((w_t0, w_t1, w_rm, row))
+            self.w_exclude_list.children = [r[3] for r in self._exclude_rows]
+
+        self.w_add_exclude_btn.on_click(_add_exclude_row)
+        # Start with one row pre-populated
+        _add_exclude_row()
+
+        # --- Preview ---
+        self.w_preview_btn = widgets.Button(
+            description="Preview signal",
+            button_style="",
+            icon="eye",
+            layout=widgets.Layout(width="160px"),
+        )
+        self.w_preview_out = widgets.Output()
+
+        # --- Mode-switch logic ---
+        self.w_keep_box.layout.display = "none"
+        self.w_exclude_box.layout.display = "none"
+
+        def _on_mode(change):
+            mode = change["new"]
+            self.w_keep_box.layout.display = "" if mode == "keep" else "none"
+            self.w_exclude_box.layout.display = "" if mode == "exclude" else "none"
+        self.w_range_mode.observe(_on_mode, names="value")
+
+        range_box = widgets.VBox([
+            widgets.HTML("<b>Analysis Range / Artifact Exclusion</b>"),
+            widgets.HTML(
+                "<p style='color:#555;font-size:0.88em;margin:4px 0 8px'>"
+                "Use <b>Keep range</b> to restrict analysis to one clean window, "
+                "or <b>Exclude ranges</b> to remove one or more artifact regions "
+                "(e.g. from zapping). "
+                "Event timestamps always reflect original-file coordinates.</p>"
+            ),
+            self.w_range_mode,
+            self.w_keep_box,
+            self.w_exclude_box,
+            widgets.HTML("<div style='margin-top:6px'></div>"),
+            widgets.HBox([
+                self.w_preview_btn,
+                _hint("Preview the full signal with range selection highlighted."),
+            ]),
+            self.w_preview_out,
+        ], layout=widgets.Layout(padding="8px"))
+        range_accordion = widgets.Accordion(children=[range_box])
+        range_accordion.set_title(0, "Analysis Range (optional)")
+        range_accordion.selected_index = None  # collapsed by default
+
+        section2 = widgets.VBox(
+            [range_accordion],
+            layout=widgets.Layout(margin="5px 0"),
+        )
+
+        self.w_preview_btn.on_click(lambda _: self._on_preview(display))
+
+        # ------------------------------------------------------------------ #
+        # Section 3: Core Settings (always visible)
         # ------------------------------------------------------------------ #
         self.w_event_direction = widgets.Dropdown(
             options=[("Down (blockade — current decreases)", "down"),
@@ -331,8 +486,8 @@ class NanoExtUI:
             indent=False,
         )
 
-        section2 = widgets.VBox([
-            widgets.HTML("<h3 style='margin:0 0 6px'>2. Analysis Settings</h3>"),
+        section3 = widgets.VBox([
+            widgets.HTML("<h3 style='margin:0 0 6px'>3. Analysis Settings</h3>"),
             widgets.VBox([
                 self.w_event_direction,
                 self.w_direction_warning,
@@ -443,13 +598,13 @@ class NanoExtUI:
         self.w_auto_tune.observe(_on_autotune, names="value")
         _on_autotune({"new": self.w_auto_tune.value})
 
-        section3 = widgets.VBox(
+        section4 = widgets.VBox(
             [accordion],
             layout=widgets.Layout(margin="5px 0"),
         )
 
         # ------------------------------------------------------------------ #
-        # Section 4: Run
+        # Section 5: Run
         # ------------------------------------------------------------------ #
         self.w_run_btn = widgets.Button(
             description="Run Analysis",
@@ -460,15 +615,15 @@ class NanoExtUI:
         self.w_run_status = widgets.HTML("")
         self.w_progress = widgets.HTML("")
 
-        section4 = widgets.VBox([
-            widgets.HTML("<h3 style='margin:0 0 6px'>3. Run</h3>"),
+        section5 = widgets.VBox([
+            widgets.HTML("<h3 style='margin:0 0 6px'>5. Run</h3>"),
             self.w_run_btn,
             self.w_run_status,
             self.w_progress,
         ], layout=widgets.Layout(border="1px solid #ddd", padding="10px", margin="5px 0"))
 
         # ------------------------------------------------------------------ #
-        # Section 5: Results
+        # Section 6: Results
         # ------------------------------------------------------------------ #
         self.w_summary = widgets.HTML("")
         self.w_plot_out = widgets.Output()
@@ -482,8 +637,8 @@ class NanoExtUI:
         )
         self.w_download_status = widgets.HTML("")
 
-        section5 = widgets.VBox([
-            widgets.HTML("<h3 style='margin:0 0 6px'>4. Results</h3>"),
+        section6 = widgets.VBox([
+            widgets.HTML("<h3 style='margin:0 0 6px'>6. Results</h3>"),
             self.w_summary,
             self.w_plot_out,
             self.w_table_out,
@@ -497,7 +652,7 @@ class NanoExtUI:
         self.w_run_btn.on_click(lambda _: self._on_run(widgets, display, HTML))
         self.w_download_btn.on_click(lambda _: self._on_download(display, HTML))
 
-        display(widgets.VBox([section1, section2, section3, section4, section5]))
+        display(widgets.VBox([section1, section2, section3, section4, section5, section6]))
 
     # ------------------------------------------------------------------ #
     # Callbacks
@@ -515,6 +670,7 @@ class NanoExtUI:
             return
         try:
             sd = self._load_signal(filepath)
+            self._signal_data = sd
             self.w_load_status.value = (
                 f"<span style='color:green'>✓ Loaded</span> — "
                 f"{sd.n_samples:,} samples @ {sd.sampling_rate:.0f} Hz "
@@ -522,8 +678,71 @@ class NanoExtUI:
             )
             if not self.w_auto_tune.value:
                 self.w_filter_cutoff.value = sd.sampling_rate / 10.0
+            # Update range widget bounds to match recording duration
+            self.w_t_start.max = sd.duration_sec
+            self.w_t_end.max = sd.duration_sec
+            self.w_t_end.value = min(self.w_t_end.value, sd.duration_sec)
+            for w_t0, w_t1, *_ in self._exclude_rows:
+                w_t0.max = sd.duration_sec
+                w_t1.max = sd.duration_sec
         except Exception as e:
             self.w_load_status.value = f"<span style='color:red'>Error: {e}</span>"
+
+    def _on_preview(self, display):
+        """Show a downsampled preview of the full signal with range selection highlighted."""
+        go, _ = _require_plotly()
+        sd = self._signal_data
+        if sd is None:
+            return
+        MAX_PTS = 10_000
+        n = sd.n_samples
+        step = max(1, n // MAX_PTS)
+        t_ds = sd.time[::step]
+        s_ds = sd.signal[::step]
+
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=t_ds, y=s_ds,
+            mode="lines", line=dict(color="#4C72B0", width=0.8),
+            name="Signal",
+        ))
+
+        mode = self.w_range_mode.value
+        if mode == "keep":
+            t0 = self.w_t_start.value
+            t1 = self.w_t_end.value
+            if t0 > 0:
+                fig.add_vrect(x0=0, x1=t0, fillcolor="rgba(128,128,128,0.25)",
+                              opacity=1.0, layer="above", line_width=0,
+                              annotation_text="excluded", annotation_font_size=9)
+            if t1 < sd.duration_sec:
+                fig.add_vrect(x0=t1, x1=sd.duration_sec,
+                              fillcolor="rgba(128,128,128,0.25)",
+                              opacity=1.0, layer="above", line_width=0,
+                              annotation_text="excluded", annotation_font_size=9)
+            fig.add_vline(x=t0, line_color="green", line_dash="dash", line_width=1.5,
+                          annotation_text=f"{t0:.2f}s", annotation_font_size=9)
+            fig.add_vline(x=t1, line_color="red", line_dash="dash", line_width=1.5,
+                          annotation_text=f"{t1:.2f}s", annotation_font_size=9)
+        elif mode == "exclude":
+            for w_t0, w_t1, *_ in self._exclude_rows:
+                t0, t1 = w_t0.value, w_t1.value
+                if t0 < t1:
+                    fig.add_vrect(x0=t0, x1=t1, fillcolor="rgba(220,80,80,0.25)",
+                                  opacity=1.0, layer="above", line_width=0,
+                                  annotation_text="artifact", annotation_font_size=9)
+
+        fig.update_layout(
+            height=300,
+            margin=dict(l=60, r=20, t=30, b=40),
+            template="plotly_white",
+            xaxis_title="Time (s)",
+            yaxis_title=sd.units or "pA",
+            title="Signal preview (downsampled)",
+        )
+        self.w_preview_out.clear_output(wait=True)
+        with self.w_preview_out:
+            fig.show()
 
     def _on_run(self, widgets, display, HTML):
         self.w_run_status.value = "<span style='color:gray'>Running…</span>"
@@ -647,6 +866,22 @@ class NanoExtUI:
         if ctrl_path:
             control_signal = self._load_signal(ctrl_path)
 
+        analysis_range = None
+        exclude_ranges = None
+        mode = self.w_range_mode.value
+        if mode == "keep":
+            t0, t1 = self.w_t_start.value, self.w_t_end.value
+            if t0 < t1:
+                analysis_range = (t0, t1)
+        elif mode == "exclude":
+            rows = [
+                (w_t0.value, w_t1.value)
+                for w_t0, w_t1, *_ in self._exclude_rows
+                if w_t0.value < w_t1.value
+            ]
+            if rows:
+                exclude_ranges = rows
+
         self._result = run_pipeline(
             signal_data=signal_data,
             config=config,
@@ -654,6 +889,8 @@ class NanoExtUI:
             verbose=False,
             control_signal=control_signal,
             on_step=tracker.start,
+            analysis_range=analysis_range,
+            exclude_ranges=exclude_ranges,
         )
 
     def _render_table(self, display, HTML):
