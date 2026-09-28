@@ -1,8 +1,19 @@
 # Nano_ext: Nanopore Signal Event Extraction
 
-A Python-based toolkit (with Rust extensions) for extracting ionic current blockade events from high-sampling-rate (>100 kHz) nanopore traces. Nano_ext uses objective, information-criterion-based methods throughout — no manual threshold tuning required.
+A Python toolkit (with Rust extensions) for extracting ionic-current blockade events from high-sampling-rate (>100 kHz) nanopore traces. Nano_ext uses objective, information-criterion-based and Bayesian methods throughout — no manual threshold tuning required — and handles 10-minute, 250 kHz recordings on a laptop.
+
+```bash
+pip install "nano-ext[gui]"
+nano-ext gui            # opens the analysis app in your browser
+```
+
+![Nano_ext GUI](https://raw.githubusercontent.com/gorgeouspig/Nano_ext/main/docs/images/gui_overview.png)
 
 ## Screenshots
+
+### Browser GUI — event populations
+
+![Populations](https://raw.githubusercontent.com/gorgeouspig/Nano_ext/main/docs/images/gui_populations.png)
 
 ### Interactive Jupyter UI
 
@@ -14,6 +25,7 @@ A Python-based toolkit (with Rust extensions) for extracting ionic current block
 
 ## Features
 
+- **Browser GUI** (`nano-ext gui`): load ABF / raw binary files, zoom smoothly through 150 M-sample traces (view-dependent min/max downsampling), drag or zoom to exclude artifacts, run any analysis method, and inspect events, populations, dwell-time fits and noise spectra — then export CSV / JSON. Runs locally; your data never leave the machine.
 - **Objective Thresholding**: Gaussian Mixture Models (GMM) + Bayesian Information Criterion (BIC) automatically determine the number of current levels and the optimal detection threshold.
 - **Objective Sub-level Analysis**: The same GMM + BIC approach is applied recursively within each event to identify sub-steps without any user-tuned sigma thresholds.
 - **Drift Handling**: Iterative local baseline estimation with polynomial/spline global detrending handles gradual open-pore current shifts.
@@ -35,60 +47,56 @@ A Python-based toolkit (with Rust extensions) for extracting ionic current block
 
 ## Installation
 
+### From PyPI
+
+Pre-built wheels (Linux x86_64/aarch64, macOS Intel/Apple silicon, Windows x64; CPython ≥ 3.10) — no Rust toolchain needed.
+
+```bash
+pip install nano-ext            # analysis library + CLI
+pip install "nano-ext[gui]"     # + browser GUI (Dash)
+pip install "nano-ext[hmm]"     # + EM/BIC HMM (hmmlearn)
+pip install "nano-ext[all]"     # everything, including the Jupyter UI
+```
+
 ### From Source (Development Mode)
 
 Requires a Rust toolchain (`rustup`) because the package includes a compiled Rust extension.
 
 ```bash
-# Clone the repository
 git clone https://github.com/gorgeouspig/Nano_ext.git
 cd Nano_ext
-
-# Create and activate a conda environment (recommended)
-conda create -n nano_ext python=3.10
-conda activate nano_ext
-
-# Install in development mode (compiles the Rust extension via maturin)
-pip install -e ".[dev]"
-```
-
-### From Pre-built Wheels
-
-Pre-built wheels for Linux, macOS, and Windows are provided in [GitHub Releases](https://github.com/gorgeouspig/Nano_ext/releases). No Rust toolchain needed.
-
-```bash
-pip install nano_ext-*.whl
-```
-
-### Interactive Jupyter UI (optional)
-
-```bash
-pip install "nano_ext[notebook]"
-
-# Register the environment as a Jupyter kernel (once per environment)
-python -m ipykernel install --user --name nano_ext --display-name "Python (nano_ext)"
-
-jupyter notebook notebooks/interactive_analysis.ipynb
+python -m venv .venv && source .venv/bin/activate   # or a conda environment
+pip install -e ".[dev,gui,hmm]"   # compiles the Rust extension via maturin
+pytest                            # fast tests; `pytest -m slow` for the rest
 ```
 
 ## Quick Start
 
-### Interactive Jupyter Notebook
-
-The easiest way to get started. Open the notebook and run the cells from top to bottom — no terminal knowledge required for the analysis itself.
+### Browser GUI
 
 ```bash
-conda activate nano_ext
+nano-ext gui                      # start in the current folder
+nano-ext gui recording.abf        # pre-select a file
+nano-ext gui --port 8060 --no-browser
+```
+
+The app opens at `http://127.0.0.1:8050/`. Work top to bottom in the left panel:
+
+1. **Recording** — browse folders (📁) or paste a path, choose the channel, *Load recording*. Raw binary files ask for the sampling rate and data type.
+2. **Analysis range** — analyse everything, a single range, or everything except artifact ranges. Zoom the trace (or box-select with ▭) and press *Add current view* / *Add selection*; ranges are shaded on the trace and can be edited in the table.
+3. **Settings** — event direction, auto-tune, filter/baseline overrides, and the methods for threshold, sub-levels, HMM, population clustering and Bayesian statistics.
+4. **Run analysis** — runs in the background (progress below the button). Results appear on the trace (filtered signal, baseline, threshold, event markers) and in the tabs: *Summary* (residual histogram with the fitted mixture), *Events* (sortable table + per-event zoom), *Scatter* (dwell time vs. relative depth by population), *Dwell & statistics*, *Noise (PSD)* and *Export*.
+
+The GUI keeps one recording in memory per server (single user); bind it to `127.0.0.1` (the default) unless you trust the network, since it can read any file your user can.
+
+### Interactive Jupyter Notebook
+
+```bash
+pip install "nano-ext[notebook]"
 jupyter notebook notebooks/interactive_analysis.ipynb
 ```
 
-The UI guides you through five sections:
-
-1. **File Loading** — select signal and optional control files via a file browser
-2. **Analysis Range** *(collapsed by default)* — restrict analysis to a time window; a preview button shows the full signal with the selected range highlighted
-3. **Analysis Settings** — choose event direction (Down / Up) and enable Auto-tune
-4. **Additional Settings** *(collapsed by default)* — preprocessing filters and advanced detection parameters, each with explanations
-5. **Run → Results** — interactive waveform with event shading, event table, and CSV download
+The notebook UI covers file loading, analysis range, settings and results with ipywidgets. For long recordings the browser GUI is faster, because it only sends downsampled views to the browser.
 
 ### Command Line Interface
 

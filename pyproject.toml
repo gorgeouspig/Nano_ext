@@ -4,13 +4,29 @@ build-backend = "maturin"
 
 [project]
 name = "nano_ext"
-version = "1.0.5"
-description = "Brand New Nanopore Signal Extraction — Event detection from nanopore current traces"
+version = "1.1.0"
+description = "Nanopore current-trace event detection: objective thresholds, sub-level and HMM analysis, Bayesian statistics, and a browser GUI"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
 authors = [
     {name = "Eiji KATO"},
+]
+keywords = ["nanopore", "electrophysiology", "event detection", "ABF", "single molecule", "HMM"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Topic :: Scientific/Engineering :: Physics",
 ]
 
 dependencies = [
@@ -38,6 +54,19 @@ notebook = [
 hmm = [
     "hmmlearn>=0.3",
 ]
+gui = [
+    "dash>=2.16,<5",
+    "plotly>=5.0",
+    "tsdownsample>=0.1.3",
+]
+all = [
+    "nano_ext[gui,hmm,notebook]",
+]
+
+[project.urls]
+Homepage = "https://github.com/gorgeouspig/Nano_ext"
+Repository = "https://github.com/gorgeouspig/Nano_ext"
+Issues = "https://github.com/gorgeouspig/Nano_ext/issues"
 
 [project.scripts]
 nano-ext = "nano_ext.cli:main"
@@ -47,7 +76,8 @@ manifest-path = "Cargo.toml"
 python-source = "src"
 module-name = "nano_ext._nano_ext"
 bindings = "pyo3"
-strip = false
+strip = true
+include = [{ path = "LICENSE", format = "sdist" }]
 
 [tool.setuptools.packages.find]
 where = ["src"]

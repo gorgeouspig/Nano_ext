@@ -26,13 +26,11 @@ def _require_plotly():
 def _event_slice(result, event_index: int, padding_ms: float):
     """Return array slice indices for an event with padding."""
     ev = result.events[event_index]
-    t_arr = result.signal_data.time  # absolute file times (s)
     padding_s = padding_ms / 1000.0
-    i_start = int(np.searchsorted(t_arr, ev.start_time - padding_s))
-    i_end = int(np.searchsorted(t_arr, ev.end_time + padding_s))
-    i_start = max(0, i_start)
-    i_end = min(len(t_arr), i_end)
-    return ev, i_start, i_end, t_arr
+    sd = result.signal_data
+    # Indices in the analysed signal; times are absolute file times (s).
+    i_start, i_end = sd.index_range(ev.start_time - padding_s, ev.end_time + padding_s)
+    return ev, i_start, i_end, sd.time_at(slice(i_start, i_end))
 
 
 def _eff_thresholds(result):
@@ -81,7 +79,7 @@ def make_event_figure(
     units = result.signal_data.units or "pA"
 
     # Time axis: ms relative to event start
-    t_rel = (t_arr[i_start:i_end] - ev.start_time) * 1000
+    t_rel = (t_arr - ev.start_time) * 1000
     sig = result.filtered_signal[i_start:i_end].astype(float)
     bl = result.baseline_result.local_baseline[i_start:i_end]
     res = result.baseline_result.residual[i_start:i_end]
@@ -229,7 +227,7 @@ def make_event_grid(
         row = i // n_cols + 1
         col = i % n_cols + 1
         _, i_start, i_end, t_arr = _event_slice(result, i, padding_ms)
-        t_rel = (t_arr[i_start:i_end] - ev.start_time) * 1000
+        t_rel = (t_arr - ev.start_time) * 1000
         res = result.baseline_result.residual[i_start:i_end]
 
         color = "#C44E52" if ev.direction.value == "down" else "#8172B2"
@@ -280,7 +278,7 @@ def dump_event_waveform(
         Padding before and after the event.
     """
     ev, i_start, i_end, t_arr = _event_slice(result, event_index, padding_ms)
-    time = t_arr[i_start:i_end]
+    time = t_arr
     signal = result.filtered_signal[i_start:i_end]
     baseline = result.baseline_result.local_baseline[i_start:i_end]
     residual = result.baseline_result.residual[i_start:i_end]

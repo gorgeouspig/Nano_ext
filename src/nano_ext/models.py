@@ -271,6 +271,26 @@ class SignalData:
         idx = np.arange(len(self.signal))[indices] if isinstance(indices, slice) else np.asarray(indices)
         return self.time_offset + idx / self.sampling_rate
 
+    def index_range(self, t_start: float, t_end: float) -> tuple[int, int]:
+        """Sample index range ``[i0, i1)`` of samples with ``t_start <= time < t_end``.
+
+        Equivalent to ``np.searchsorted(self.time, [t_start, t_end])`` without
+        materialising the time array.
+        """
+        n = len(self.signal)
+        if self._time is not None:
+            i0, i1 = np.searchsorted(self._time, [t_start, t_end])
+        elif self.index_map is not None:
+            i0, i1 = np.searchsorted(
+                self.index_map, [t_start * self.sampling_rate, t_end * self.sampling_rate]
+            )
+        else:
+            i0, i1 = (
+                int(np.ceil((t - self.time_offset) * self.sampling_rate - 1e-9))
+                for t in (t_start, t_end)
+            )
+        return int(min(max(i0, 0), n)), int(min(max(i1, 0), n))
+
     @property
     def duration_sec(self) -> float:
         """Total duration of the recording in seconds."""

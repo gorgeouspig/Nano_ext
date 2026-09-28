@@ -51,7 +51,11 @@ from .preprocessing.segments import (
 
 from ._nano_ext import pelt, local_baseline_percentile
 
-__version__ = "0.1.0"
+try:
+    from importlib.metadata import PackageNotFoundError, version as _version
+    __version__ = _version("nano_ext")
+except PackageNotFoundError:  # running from a source tree without install
+    __version__ = "0+unknown"
 
 __all__ = [
     # Data models
