@@ -36,8 +36,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "baseline_window_sec": None,
     "min_event_duration_ms": None,
     "merge_gap_ms": None,
-    "threshold_method": "gmm",
-    "sublevel_method": "gmm",
+    "threshold_method": "dpgmm",
+    "sublevel_method": "dpgmm",
     "analyze_sublevels": True,
     "hmm_method": "off",
     "cluster_events": False,
@@ -75,6 +75,90 @@ def list_directory(folder: str | os.PathLike) -> tuple[Path, list[Path], list[Pa
         except OSError:
             continue
     return folder, dirs, files
+
+
+class DialogUnavailable(RuntimeError):
+    """The operating-system file dialog cannot be shown (no Tk / no display)."""
+
+
+# Runs in a separate interpreter so Tk owns that process's main thread (the
+# Dash callbacks run on worker threads, and macOS only allows GUI calls on the
+# main thread).  Prints one JSON line.
+_DIALOG_SCRIPT = r"""
+import json, sys
+args = json.loads(sys.argv[1])
+try:
+    import tkinter as tk
+    from tkinter import filedialog
+except Exception as exc:
+    print(json.dumps({"error": "tkinter is not installed (%s)" % exc})); sys.exit(0)
+try:
+    root = tk.Tk()
+except Exception as exc:
+    print(json.dumps({"error": "no display available (%s)" % exc})); sys.exit(0)
+root.withdraw()
+try:
+    root.attributes("-topmost", True)
+except Exception:
+    pass
+root.update()
+path = filedialog.askopenfilename(
+    parent=root, title=args["title"], initialdir=args["initialdir"],
+    filetypes=[tuple(ft) for ft in args["filetypes"]],
+)
+root.destroy()
+print(json.dumps({"path": path or ""}))
+"""
+
+DIALOG_FILETYPES = [
+    ["Recordings", "*.abf *.ABF *.bin *.dat *.raw"],
+    ["Axon ABF", "*.abf *.ABF"],
+    ["All files", "*"],
+]
+
+
+def native_file_dialog(
+    initialdir: Optional[str] = None,
+    title: str = "Open recording",
+    timeout: float = 900.0,
+) -> Optional[str]:
+    """Show the operating system's "open file" dialog on this machine.
+
+    Returns the chosen path, or ``None`` if the user cancelled.  Raises
+    :class:`DialogUnavailable` when no dialog can be shown (Tk missing, no
+    display, timeout) so the caller can fall back to the in-page browser.
+    """
+    import subprocess
+    import sys
+
+    args = json.dumps({
+        "title": title,
+        "initialdir": str(Path(initialdir).expanduser()) if initialdir else os.getcwd(),
+        "filetypes": DIALOG_FILETYPES,
+    })
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", _DIALOG_SCRIPT, args],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise DialogUnavailable("the file dialog timed out") from exc
+    except OSError as exc:
+        raise DialogUnavailable(str(exc)) from exc
+    return parse_dialog_output(proc.stdout, proc.stderr)
+
+
+def parse_dialog_output(stdout: str, stderr: str = "") -> Optional[str]:
+    """Interpret the helper's JSON line (see :func:`native_file_dialog`)."""
+    line = next((ln for ln in reversed((stdout or "").splitlines()) if ln.strip()), "")
+    try:
+        msg = json.loads(line)
+    except ValueError:
+        detail = (stderr or stdout or "no output").strip().splitlines()
+        raise DialogUnavailable(detail[-1] if detail else "no output")
+    if "error" in msg:
+        raise DialogUnavailable(msg["error"])
+    return msg.get("path") or None
 
 
 def recording_info(path: str | os.PathLike) -> dict:

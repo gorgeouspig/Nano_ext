@@ -41,6 +41,10 @@ def make_demo(path: Path, duration: float, sampling_rate: float = 250_000) -> in
     a, b = int(0.4 * duration * sampling_rate), int((0.4 * duration + 0.5) * sampling_rate)
     sig[a:b] += 400 * np.sin(np.linspace(0, 60, b - a))  # zap artifact
     abfWriter.writeABF1(sig[None, :], str(path), sampling_rate)
+    # Negative control: same noise, no events.
+    ctrl = generate_synthetic_signal(duration_sec=min(duration, 5.0), sampling_rate=sampling_rate,
+                                     events=[], seed=2).signal_data.signal.astype(np.float32)
+    abfWriter.writeABF1(ctrl[None, :], str(path.with_name("control.abf")), sampling_rate)
     return len(events)
 
 
@@ -82,31 +86,58 @@ def main() -> int:
             page.goto(url)
             page.wait_for_selector("#file-info:has-text('kHz')", timeout=30000)
 
-            # Folder browser: go up one level and back into the demo folder.
-            page.click("#browse")
-            page.get_by_text("⬆  ..", exact=True).click()
-            page.wait_for_function(f"document.querySelector('#folder').value === {str(out.parent)!r}")
-            page.click("#browse")
-            page.get_by_text(f"📁  {out.name}", exact=True).click()
-            page.wait_for_function(f"document.querySelector('#folder').value === {str(out)!r}")
+            # System file dialog: headless here, so it must report that it is
+            # unavailable and open the in-page folder list instead.
+            env_display = os.environ.get("DISPLAY")
+            if not env_display:
+                page.click("#browse-native")
+                page.wait_for_selector("#dialog-status:has-text('unavailable')", timeout=60000)
+                page.wait_for_function("document.querySelector('#browser-details').open === true")
+            else:
+                page.evaluate("document.querySelector('#browser-details').open = true")
 
-            page.click("#load")
-            page.wait_for_selector("#load-status:has-text('Loaded')", timeout=120000)
+            # In-page folder list: up one level, back into the demo folder,
+            # then click the recording -> it loads without pressing Load.
+            page.locator("#browser-list .entry", has_text="⬆").click()
+            page.wait_for_function(f"document.querySelector('#folder').value === {str(out.parent)!r}")
+            page.locator("#browser-list .entry", has_text=out.name).click()
+            page.wait_for_function(f"document.querySelector('#folder').value === {str(out)!r}")
+            page.locator("#browser-list .entry.file", has_text="demo.abf").click()
+            page.wait_for_selector("#load-status:has-text('Loaded demo.abf')", timeout=120000)
             page.wait_for_selector("#view-info:has-text('points drawn')", timeout=60000)
             page.screenshot(path=str(out / "01_loaded.png"))
 
-            # Exclude the artifact: zoom onto it, add the view as a range.
+            # Negative control by path.
+            page.fill("#control-path", str(out / "control.abf"))
+            page.press("#control-path", "Enter")
+            page.wait_for_selector("#control-info:has-text('Control: control.abf')", timeout=60000)
+
+            # Exclude the artifact by dragging across it in "Select range" mode.
             a = 0.4 * args.duration - 0.1
-            page.click("text=Exclude artifact ranges")
-            page.evaluate(f"() => Plotly.relayout(document.querySelector('#wave .js-plotly-plot'),"
-                          f" {{'xaxis.range[0]': {a}, 'xaxis.range[1]': {a + 0.7}}})")
-            page.wait_for_function("document.querySelector('#view-info').innerText.includes('175,0')",
-                                   timeout=30000)
-            page.click("#add-view")
+            page.locator("#mouse-mode label", has_text="Select range").click()
+            page.wait_for_function("document.querySelector('#wave .js-plotly-plot')._fullLayout.dragmode === 'select'",
+                                   timeout=20000)
+            x0, x1, y = page.evaluate(f"""() => {{
+                const gd = document.querySelector('#wave .js-plotly-plot');
+                const xa = gd._fullLayout.xaxis, ya = gd._fullLayout.yaxis;
+                const box = gd.getBoundingClientRect();
+                return [box.left + xa._offset + xa.l2p({a}), box.left + xa._offset + xa.l2p({a + 0.7}),
+                        box.top + ya._offset + ya._length / 2];
+            }}""")
+            page.mouse.move(x0, y)
+            page.mouse.down()
+            page.mouse.move((x0 + x1) / 2, y, steps=5)
+            page.mouse.move(x1, y, steps=5)
+            page.mouse.up()
+            page.wait_for_selector("#selection-bar:has-text('Selected')", timeout=20000)
+            print(page.inner_text("#selection-label"))
+            page.screenshot(path=str(out / "01b_selection.png"))
+            page.click("#sel-exclude")
             page.wait_for_selector("#ranges td[data-dash-column='start']", timeout=10000)
-            page.click("#reset-view")
-            page.wait_for_function("!document.querySelector('#view-info').innerText.includes('175,0')",
-                                   timeout=30000)
+            page.wait_for_selector("#selection-bar", state="hidden", timeout=10000)
+            assert page.is_checked("#range-mode input[value='exclude']"), "range mode not set to exclude"
+            print("excluded:", page.inner_text("#ranges").split())
+            page.locator("#mouse-mode label", has_text="Zoom").click()
 
             page.click("text=Methods")
             page.click("text=Cluster events into populations")
@@ -115,6 +146,9 @@ def main() -> int:
             page.wait_for_selector("#run-status:has-text('Done')", timeout=600000)
             page.wait_for_selector("#summary:has-text('Events detected')", timeout=30000)
             print(page.inner_text("#run-status"))
+            page.mouse.move(5, 5)  # no hover tooltip in the screenshot
+            page.add_style_tag(content=".hoverlayer { display: none !important; }")
+            page.wait_for_timeout(500)
             page.screenshot(path=str(out / "02_results.png"), full_page=True)
 
             tab = lambda name: page.locator("#tabs .tab", has_text=name).click()  # noqa: E731

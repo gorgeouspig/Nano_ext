@@ -56,3 +56,28 @@ input[type=text], input[type=number] { border: 1px solid var(--line); border-rad
   .sidebar { position: static; max-height: none; padding-bottom: 14px; }
   .run-box { position: static; width: auto; border: none; padding: 10px 0 0; }
 }
+
+/* --- v1.2: file browser list, mouse mode, selection bar, control ---------- */
+.browser-list { display: flex; flex-direction: column; max-height: 240px; overflow-y: auto;
+                border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+.browser-list .entry { text-align: left; border: none; border-bottom: 1px solid #f0f2f5;
+                       background: transparent; padding: 5px 8px; cursor: pointer; font-size: 12.5px;
+                       color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.browser-list .entry:hover { background: #eef3f9; }
+.browser-list .entry.file { color: var(--accent); font-weight: 600; }
+.control-box { border-top: 1px dashed var(--line); padding-top: 8px; margin-top: 4px; }
+.toolbar { margin-bottom: 4px; gap: 12px; }
+.grow-text { flex: 1; text-align: right; }
+.segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.segmented label { display: inline-flex !important; align-items: center; padding: 4px 10px;
+                   cursor: pointer; font-size: 12.5px; background: #fff; border-right: 1px solid var(--line); }
+.segmented label:last-child { border-right: none; }
+.segmented input { position: absolute; opacity: 0; width: 0; height: 0; }
+.segmented label:has(input:checked) { background: var(--accent); color: #fff; }
+.selection-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 10px;
+                 margin-bottom: 4px; border: 1px solid #f0c36d; background: #fff8e6; border-radius: 6px;
+                 font-size: 12.5px; }
+.btn.danger { background: #c0392b; color: #fff; border-color: #c0392b; }
+.btn.danger:hover { filter: brightness(1.08); }
+.segmented label:has(input:checked), .segmented label:has(input:checked) * { color: #fff !important; }
+.segmented label * { color: var(--ink); }

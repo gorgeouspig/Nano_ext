@@ -423,9 +423,10 @@ class DetectionConfig:
         Information criterion for GMM model selection: ``"bic"``
         (preferred, penalises complexity more) or ``"aic"``.
     threshold_method : str
-        ``"gmm"`` (fit k = 1..gmm_max_components and select by
-        *bic_criterion*) or ``"dpgmm"`` (single Dirichlet-process GMM fit;
-        the number of components is inferred by the prior).
+        ``"dpgmm"`` (default since 1.2: single Dirichlet-process GMM fit;
+        the number of components is inferred by the prior) or ``"gmm"``
+        (fit k = 1..gmm_max_components and select by *bic_criterion*; the
+        default before 1.2).
     dp_concentration : float, optional
         Dirichlet-process concentration used by every ``"dpgmm"`` method.
         Smaller values favour fewer components.  ``None`` uses
@@ -447,9 +448,10 @@ class DetectionConfig:
     max_sublevel_depth : int
         Maximum number of sub-level components (GMM) to test per event.
     sublevel_method : str
-        ``"gmm"`` (GMM + BIC, default), ``"dpgmm"`` (Dirichlet-process GMM
-        fitted on decorrelated samples) or ``"bocpd"`` (Bayesian online
-        change-point detection).
+        ``"dpgmm"`` (default since 1.2: Dirichlet-process GMM fitted on
+        decorrelated samples), ``"gmm"`` (GMM + BIC, the default before 1.2)
+        or ``"bocpd"`` (Bayesian online change-point detection;
+        experimental, over-segments pink-noise traces).
     hmm_method : str
         ``"bic"`` (hmmlearn EM for k = 1..hmm_max_states, select by BIC;
         requires hmmlearn) or ``"sticky_hdp"`` (sticky HDP-HMM Gibbs
@@ -493,7 +495,7 @@ class DetectionConfig:
     gmm_max_components: int = 10
     bic_criterion: str = "bic"
     gmm_max_samples: int = 100_000
-    threshold_method: str = "gmm"
+    threshold_method: str = "dpgmm"
     dp_concentration: Optional[float] = None
 
     # --- Event detection ---
@@ -504,7 +506,7 @@ class DetectionConfig:
     # --- Sublevel analysis ---
     min_segment_samples: int = 50
     max_sublevel_depth: int = 5
-    sublevel_method: str = "gmm"
+    sublevel_method: str = "dpgmm"
 
     # --- HMM analysis ---
     hmm_analysis: bool = False
