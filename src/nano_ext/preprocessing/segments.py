@@ -25,8 +25,8 @@ def crop_signal_to_range(
 ) -> tuple[SignalData, int]:
     """Crop a SignalData to the specified time range.
 
-    The returned ``SignalData.time`` array reflects **original-file** time
-    (starts at approximately *t_start*), so that event timestamps reported
+    The returned ``SignalData.time`` reflects **original-file** time
+    (starts at approximately *t_start*; implied by ``time_offset``), so that event timestamps reported
     by the pipeline are in original-file coordinates without further adjustment.
 
     Parameters
@@ -76,16 +76,14 @@ def crop_signal_to_range(
         )
 
     cropped_signal = signal_data.signal[i_start:i_end]
-    n_cropped = len(cropped_signal)
-    cropped_time = np.arange(i_start, i_start + n_cropped) / sr
 
     cropped = SignalData(
         signal=cropped_signal,
         sampling_rate=sr,
-        time=cropped_time,
         channel=signal_data.channel,
         units=signal_data.units,
         metadata=dict(signal_data.metadata),
+        time_offset=signal_data.time_offset + i_start / sr,
     )
 
     return cropped, i_start
@@ -204,8 +202,8 @@ def concatenate_signal_ranges(
 ) -> tuple[SignalData, np.ndarray]:
     """Concatenate multiple time windows from a recording into one signal.
 
-    The returned ``SignalData.time`` stores **original-file** timestamps for
-    each concatenated sample (non-monotone jumps occur at range boundaries —
+    The returned ``SignalData.time`` gives **original-file** timestamps for
+    each concatenated sample (implied by ``SignalData.index_map``) (non-monotone jumps occur at range boundaries —
     use :func:`insert_nan_at_gaps` before plotting).
 
     Parameters
@@ -258,13 +256,12 @@ def concatenate_signal_ranges(
 
     concat_signal = np.concatenate(segments)
     idx_map = np.concatenate(idx_maps)
-    # Time array in original-file coordinates
-    concat_time = idx_map / sr
 
     concatenated = SignalData(
         signal=concat_signal,
         sampling_rate=sr,
-        time=concat_time,
+        # Original-file times are implied by the index map (no time array).
+        index_map=idx_map,
         channel=signal_data.channel,
         units=signal_data.units,
         metadata={**dict(signal_data.metadata), "_range_boundaries": _find_boundaries(idx_maps)},

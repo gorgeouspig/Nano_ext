@@ -21,7 +21,8 @@ A Python-based toolkit (with Rust extensions) for extracting ionic current block
 - **Automated Parameter Tuning**: `suggest_config()` estimates the noise floor from the signal and automatically sets `min_event_duration`, `merge_gap`, and `baseline_window` — a good starting point before manual refinement.
 - **Negative Control Integration**: Pass an analyte-free control recording to derive a clean noise estimate, stabilising threshold determination when the sample trace is event-dense.
 - **Artifact Exclusion**: Exclude one or more artifact regions (e.g. from zapping operations) from all estimation steps via `--analysis-range START END` (single keep-window) or `--exclude-range START END` (one or more exclusion windows). Event timestamps in the output remain in original-file coordinates.
-- **High Performance**: Rust extensions (PyO3/maturin) accelerate the sliding-window baseline percentile and PELT change-point kernels by 5–34×.
+- **High Performance**: Rust extensions (PyO3/maturin) accelerate the sliding-window baseline percentile (multi-threaded, selection instead of sorting) and PELT change-point kernels. Per-event sub-level analysis runs in parallel worker processes (`--jobs`, default: all CPUs).
+- **Long Recordings on a Laptop**: ABF data are memory-mapped and kept as float32 (exact for 16-bit ADC data); time arrays are implied rather than stored. A 10-minute, 250 kHz recording (150 M samples) runs end-to-end in ~1.5 min with a ~3.3 GB peak (see [Performance](#performance)).
 - **Flexible Input**: Supports Axon Binary Format (ABF) and raw binary data.
 - **Interactive Jupyter UI**: `notebooks/interactive_analysis.ipynb` provides a widget-based GUI for interactive parameter exploration and result inspection — no terminal required during analysis.
 - **Per-Event Waveform Viewer**: Browse individual events with zoomed two-panel figures (signal + residual + sublevel boundaries). Export any event's waveform as `.npz` or `.csv` for downstream ML workflows.
@@ -274,6 +275,26 @@ The interactive plotly waveform (available in the Jupyter UI) shows:
 - Per-event shading with hover tooltips (event index, depth, duration)
 - Event Browser: per-event zoom with IntSlider and grid-view toggle
 - Diagnostics: PSD plot with optional control overlay
+
+## Performance
+
+Measured on a synthetic 10-minute, 250 kHz, int16 ABF (150 M samples, 1 180 events), 4 CPU cores, default settings with a 1 s baseline window:
+
+| | Before | After |
+|---|---|---|
+| Peak memory | ~16 GB (extrapolated from a 60 s run: 1.8 GB) | 3.3 GB (+ ~190 MB per worker process) |
+| Total time | ~10 min (extrapolated) | 88 s with `--jobs -1` (184 s with `n_jobs=1`) |
+| Baseline estimation | ~8 min (extrapolated) | 34 s |
+
+What changed:
+
+- **Readers**: ABF samples are memory-mapped from the file (the header is still parsed by pyabf) and only the requested channel is scaled, to float32. Raw binary files are memory-mapped as well.
+- **Pipeline arrays** (filtered signal, baseline, residual) are float32 for float32 input; reductions (medians, fits, sums) are exact or run in float64. On the same data the detected events are identical to a float64 run.
+- **`SignalData.time`** is computed on access unless given explicitly; cropped / concatenated signals store an offset or index map instead of a time array. Use `SignalData.time_at(indices)` for a subset.
+- **Rust baseline kernel** returns a numpy array (previously a Python list of floats), uses O(n) selection instead of sorting each window, runs windows on all cores and releases the GIL.
+- **Filtering** runs in overlapping chunks (identical output) to bound float64 working memory.
+- **Reproducibility**: the random subsample used for the threshold model is seeded (`DetectionConfig.random_seed`, default 0); previously repeated runs on the same file could give thresholds a few pA apart.
+- **Parallel sub-levels**: `DetectionConfig.n_jobs` (Python API default 1) / `--jobs` (CLI default -1). Results are identical to a sequential run. When calling the API with `n_jobs != 1` from a script, keep the usual `if __name__ == "__main__":` guard (workers are started with `spawn`).
 
 ## Testing
 

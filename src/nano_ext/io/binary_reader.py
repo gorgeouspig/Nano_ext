@@ -46,7 +46,7 @@ def read_binary(
     The raw binary file is expected to contain a continuous sequence of
     samples in the specified data type. An optional header can be skipped.
 
-    The signal is converted to float64 and scaled as:
+    The signal is converted to float32 and scaled as:
         signal_pA = raw_value * scale_factor + offset
 
     Parameters
@@ -94,18 +94,20 @@ def read_binary(
 
     np_dtype = DTYPE_MAP[dtype]
 
-    # Read raw data
-    with open(filepath, "rb") as f:
-        if header_bytes > 0:
-            f.seek(header_bytes)
-        raw_bytes = f.read()
-
-    raw_data = np.frombuffer(raw_bytes, dtype=np_dtype)
+    # Memory-map the raw samples (no intermediate bytes copy of the file).
+    n_raw = max(0, filepath.stat().st_size - header_bytes) // np.dtype(np_dtype).itemsize
+    if n_raw == 0:
+        raw_data = np.empty(0, dtype=np_dtype)
+    else:
+        raw_data = np.memmap(
+            filepath, dtype=np_dtype, mode="r", offset=header_bytes, shape=(n_raw,)
+        )
     if max_samples is not None:
         raw_data = raw_data[:max_samples]
 
-    # Convert to float64 and apply scaling
-    signal = raw_data.astype(np.float64) * scale_factor + offset
+    # Convert to float32 (exact for 16-bit ADC data) and apply scaling
+    from nano_ext.io.abf_reader import _scale
+    signal = _scale(raw_data, float(scale_factor), float(offset))
 
     metadata = {
         "format": "binary",

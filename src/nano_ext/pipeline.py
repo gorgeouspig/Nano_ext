@@ -307,6 +307,7 @@ def run_pipeline(
         max_components=config.gmm_max_components,
         criterion=config.bic_criterion,
         max_samples_for_fit=config.gmm_max_samples,
+        seed=config.random_seed,
         method=config.threshold_method,
         dp_concentration=config.dp_concentration,
     )
@@ -359,6 +360,7 @@ def run_pipeline(
             min_segment_samples=config.min_segment_samples,
             method=config.sublevel_method,
             dp_concentration=config.dp_concentration,
+            n_jobs=config.n_jobs,
         )
         n_multi = sum(1 for ev in events if ev.is_multilevel)
         if verbose:

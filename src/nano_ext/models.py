@@ -224,11 +224,22 @@ class SignalData:
     Attributes
     ----------
     signal : np.ndarray
-        Raw current signal (1-D array).
+        Raw current signal (1-D array).  Readers return float32, which
+        represents 16-bit ADC data exactly and halves memory use.
     sampling_rate : float
         Sampling rate in Hz.
     time : np.ndarray
-        Time array in seconds (computed from sampling rate).
+        Time array in seconds.  Only stored when given explicitly (e.g.
+        original-file timestamps of a cropped or concatenated signal);
+        otherwise ``index / sampling_rate`` is computed on each access, so
+        long recordings do not carry a second full-length array.  Prefer
+        :meth:`time_at` for a subset of samples.
+    time_offset : float
+        Original-file time (s) of sample 0 for implied times (set when a
+        signal is cropped to an analysis range).
+    index_map : np.ndarray, optional
+        Original-file sample index of every sample (set when several ranges
+        are concatenated); implied times are then ``index_map / sampling_rate``.
     channel : int
         Channel number (for multi-channel recordings).
     units : str
@@ -239,15 +250,26 @@ class SignalData:
 
     signal: np.ndarray
     sampling_rate: float
-    time: Optional[np.ndarray] = None
+    time: Optional[np.ndarray] = field(default=None, repr=False, compare=False)
     channel: int = 0
     units: str = "pA"
     metadata: dict = field(default_factory=dict)
+    time_offset: float = 0.0
+    index_map: Optional[np.ndarray] = field(default=None, repr=False, compare=False)
 
-    def __post_init__(self):
-        if self.time is None:
-            n_samples = len(self.signal)
-            self.time = np.arange(n_samples) / self.sampling_rate
+    @property
+    def has_explicit_time(self) -> bool:
+        """True if a time array was supplied instead of being implied."""
+        return self._time is not None
+
+    def time_at(self, indices) -> np.ndarray:
+        """Times (s) of the given sample indices or slice."""
+        if self._time is not None:
+            return self._time[indices]
+        if self.index_map is not None:
+            return self.index_map[indices] / self.sampling_rate
+        idx = np.arange(len(self.signal))[indices] if isinstance(indices, slice) else np.asarray(indices)
+        return self.time_offset + idx / self.sampling_rate
 
     @property
     def duration_sec(self) -> float:
@@ -258,6 +280,24 @@ class SignalData:
     def n_samples(self) -> int:
         """Total number of samples."""
         return len(self.signal)
+
+
+def _signal_time_get(self) -> np.ndarray:
+    if self._time is not None:
+        return self._time
+    if self.index_map is not None:
+        return self.index_map / self.sampling_rate
+    return self.time_offset + np.arange(len(self.signal)) / self.sampling_rate
+
+
+def _signal_time_set(self, value: Optional[np.ndarray]) -> None:
+    self._time = value
+
+
+# Replace the dataclass field with a property: the generated __init__ still
+# accepts ``time=...`` (routed through the setter), but an omitted time array
+# is computed on access instead of being stored.
+SignalData.time = property(_signal_time_get, _signal_time_set)
 
 
 @dataclass
@@ -404,6 +444,14 @@ class DetectionConfig:
         Method for estimating noise standard deviation: ``"mad"`` (Median
         Absolute Deviation — robust to outliers, recommended) or
         ``"std"`` (standard deviation).
+    n_jobs : int
+        Worker processes for per-event analyses (sub-levels).  ``1`` runs
+        in-process (default for the Python API); ``-1`` uses every CPU.
+        Results do not depend on it.
+    random_seed : int, optional
+        Seed for the random subsample used to fit the threshold model.
+        Fixed by default so that repeated runs give identical results;
+        ``None`` draws a fresh subsample each run.
     """
 
     # --- Filtering ---
@@ -449,3 +497,9 @@ class DetectionConfig:
 
     # --- Noise estimation ---
     noise_estimation: str = "mad"
+
+    # --- Execution ---
+    n_jobs: int = 1
+
+    # --- Reproducibility ---
+    random_seed: Optional[int] = 0

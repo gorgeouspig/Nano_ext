@@ -24,6 +24,7 @@ def lowpass_filter(
     cutoff: Optional[float] = None,
     filter_type: str = "bessel",
     order: int = 4,
+    chunk_samples: int = 1 << 22,
 ) -> np.ndarray:
     """Apply a low-pass filter to the signal.
 
@@ -44,11 +45,16 @@ def lowpass_filter(
         minimal phase distortion) or "butterworth" (sharper rolloff).
     order : int
         Filter order. Default 4.
+    chunk_samples : int
+        Signals longer than this are filtered in overlapping chunks to bound
+        the float64 working memory (the result matches a single pass to
+        rounding error).
 
     Returns
     -------
     np.ndarray
-        Filtered signal (same length as input).
+        Filtered signal (same length as input); float32 for float32 input,
+        float64 otherwise.
 
     Raises
     ------
@@ -89,6 +95,36 @@ def lowpass_filter(
     max_pad = len(signal) // 2
     if pad_samples > max_pad:
         pad_samples = max_pad
+
+    out_dtype = np.float32 if signal.dtype == np.float32 else np.float64
+    n = len(signal)
+
+    if n <= chunk_samples:
+        return _filtfilt_padded(sos, signal, pad_samples).astype(out_dtype, copy=False)
+
+    # Long signals: filter in chunks, each extended by `pad_samples` of the
+    # neighbouring signal (reflection only at the true ends), and keep the
+    # chunk's own span.  The padding is far longer than the filter's impulse
+    # response, so the result matches a single full-length pass to rounding
+    # error while keeping the float64 working set to a few chunks.
+    filtered = np.empty(n, dtype=out_dtype)
+    for start in range(0, n, chunk_samples):
+        end = min(n, start + chunk_samples)
+        a = max(0, start - pad_samples)
+        b = min(n, end + pad_samples)
+        seg = np.asarray(signal[a:b], dtype=np.float64)
+        left = pad_samples - (start - a)   # reflection needed at the start
+        right = pad_samples - (b - end)    # reflection needed at the end
+        if left > 0 or right > 0:
+            seg = np.pad(seg, (left, right), mode="reflect")
+        out = sosfiltfilt(sos, seg)
+        keep_from = left + (start - a)
+        filtered[start:end] = out[keep_from:keep_from + (end - start)]
+    return filtered
+
+
+def _filtfilt_padded(sos: np.ndarray, signal: np.ndarray, pad_samples: int) -> np.ndarray:
+    """Zero-phase filtering with reflection padding of `pad_samples` per side."""
     if pad_samples > 0:
         # Use reflection padding at the edges
         padded_signal = np.pad(signal, (pad_samples, pad_samples), mode='reflect')
@@ -100,11 +136,8 @@ def lowpass_filter(
 
     # Remove padding
     if pad_samples > 0:
-        filtered = filtered_padded[pad_samples:-pad_samples]
-    else:
-        filtered = filtered_padded
-
-    return filtered
+        return filtered_padded[pad_samples:-pad_samples]
+    return filtered_padded
 
 
 def auto_cutoff(sampling_rate: float, factor: float = 10.0) -> float:
