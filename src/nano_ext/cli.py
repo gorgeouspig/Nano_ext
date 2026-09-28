@@ -202,6 +202,63 @@ def main(verbose):
     help="Maximum number of HMM states to test per event (BIC selects the best).",
 )
 @click.option(
+    "--hmm-method",
+    type=click.Choice(["bic", "sticky_hdp"]),
+    default="bic",
+    help=(
+        "HMM state-count selection: 'bic' (hmmlearn EM + BIC) or 'sticky_hdp' "
+        "(sticky HDP-HMM Gibbs sampler; infers the number of states)."
+    ),
+)
+@click.option(
+    "--threshold-method",
+    type=click.Choice(["gmm", "dpgmm"]),
+    default="gmm",
+    help=(
+        "Threshold model: 'gmm' (GMM for k=1..K, select by --bic-criterion) or "
+        "'dpgmm' (Dirichlet-process GMM; number of components inferred)."
+    ),
+)
+@click.option(
+    "--sublevel-method",
+    type=click.Choice(["gmm", "dpgmm", "bocpd"]),
+    default="gmm",
+    help=(
+        "Sub-level method: 'gmm' (GMM + BIC), 'dpgmm' (Dirichlet-process GMM) "
+        "or 'bocpd' (Bayesian online change-point detection)."
+    ),
+)
+@click.option(
+    "--dp-concentration",
+    type=float,
+    default=None,
+    help="Dirichlet-process concentration for all 'dpgmm' methods (smaller = fewer components).",
+)
+@click.option(
+    "--cluster",
+    "cluster_events",
+    is_flag=True,
+    help=(
+        "Cluster events into populations (relative depth x log dwell time) with a "
+        "Dirichlet-process GMM. Adds cluster_id / cluster_prob to the events CSV "
+        "and writes <stem>_clusters.csv."
+    ),
+)
+@click.option(
+    "--max-clusters",
+    type=int,
+    default=10,
+    help="Upper bound on the number of event populations for --cluster.",
+)
+@click.option(
+    "--bayes-stats",
+    is_flag=True,
+    help=(
+        "Write <stem>_bayes_stats.json: capture-rate posterior and dwell-time "
+        "mixture-of-exponentials posterior (per population with --cluster)."
+    ),
+)
+@click.option(
     "--plot",
     is_flag=True,
     help="Generate and save a plot of the analysis result.",
@@ -235,6 +292,13 @@ def analyze(
     exclude_ranges,
     hmm_analysis,
     hmm_max_states,
+    hmm_method,
+    threshold_method,
+    sublevel_method,
+    dp_concentration,
+    cluster_events,
+    max_clusters,
+    bayes_stats,
     plot,
 ):
     """Analyze a nanopore data file to detect events."""
@@ -292,6 +356,12 @@ def analyze(
         )
     config.hmm_analysis = hmm_analysis
     config.hmm_max_states = hmm_max_states
+    config.hmm_method = hmm_method
+    config.threshold_method = threshold_method
+    config.sublevel_method = sublevel_method
+    config.dp_concentration = dp_concentration
+    config.cluster_events = cluster_events
+    config.max_clusters = max_clusters
 
     if analysis_range is not None and exclude_ranges:
         raise click.UsageError("--analysis-range and --exclude-range cannot be combined.")
@@ -322,6 +392,30 @@ def analyze(
         csv_path = output_dir / f"{filepath.stem}_events.csv"
         write_events_to_csv(result.events, csv_path, result.signal_data.sampling_rate)
         click.echo(f"Events saved to {csv_path}")
+
+        if result.cluster_result is not None:
+            clusters_path = output_dir / f"{filepath.stem}_clusters.csv"
+            result.cluster_result.summary_table().to_csv(clusters_path, index=False)
+            click.echo(f"Event populations saved to {clusters_path}")
+
+        if bayes_stats and result.events:
+            import json
+            from nano_ext.analysis.bayes_stats import summarize_event_statistics
+            stats = summarize_event_statistics(
+                result.events, observation_time=result.signal_data.duration_sec,
+            )
+            rate = stats["all"]["capture_rate"]
+            click.echo(
+                f"Capture rate:    {rate['mean']:.3f} /s "
+                f"(95% CrI {rate['lower']:.3f} – {rate['upper']:.3f})"
+            )
+            if "dwell_time" in stats["all"]:
+                dw = stats["all"]["dwell_time"]
+                taus = ", ".join(f"{t * 1e3:.3f}" for t in dw["tau_mean"])
+                click.echo(f"Dwell-time τ:    {taus} ms ({dw['n_components']} component(s))")
+            stats_path = output_dir / f"{filepath.stem}_bayes_stats.json"
+            stats_path.write_text(json.dumps(stats, indent=2))
+            click.echo(f"Bayesian statistics saved to {stats_path}")
 
         # Plot result
         if plot:

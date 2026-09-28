@@ -16,6 +16,9 @@ Key features:
 - Robust baseline component identification based on proximity to zero in residual space
 - Computation of decision boundaries between Gaussian components
 - Support for both BIC (preferred) and AIC criteria
+- Optional Dirichlet-process GMM (``method="dpgmm"``): a single variational
+  fit whose stick-breaking prior prunes unneeded components, replacing the
+  k = 1..K loop
 - Efficient handling of large signals through intelligent subsampling
 """
 
@@ -28,6 +31,10 @@ from sklearn.mixture import GaussianMixture
 
 from nano_ext.models import ThresholdResult
 
+# The variational DPGMM costs ~5x a single EM fit per sample; its posterior
+# over the number of components is already sharp at this many samples.
+_DPGMM_MAX_SAMPLES = 20_000
+
 
 def determine_threshold(
     residual: np.ndarray,
@@ -35,6 +42,8 @@ def determine_threshold(
     criterion: str = "bic",
     max_samples_for_fit: int = 500_000,
     seed: Optional[int] = None,
+    method: str = "gmm",
+    dp_concentration: Optional[float] = None,
 ) -> ThresholdResult:
     """Determine event detection threshold using GMM + BIC.
 
@@ -59,19 +68,35 @@ def determine_threshold(
         longer, a random subsample is used.
     seed : int, optional
         Random seed for reproducibility.
+    method : str
+        ``"gmm"`` (fit k = 1..max_components, select by *criterion*) or
+        ``"dpgmm"`` (single Dirichlet-process GMM fit truncated at
+        *max_components*, on at most 20 000 samples; *criterion* is
+        ignored).
+    dp_concentration : float, optional
+        Dirichlet-process concentration for ``method="dpgmm"``.  ``None``
+        uses ``1 / max_components``.
 
     Returns
     -------
     ThresholdResult
-        Threshold value, GMM parameters, and BIC scores.
+        Threshold value, GMM parameters, and BIC scores (empty for
+        ``method="dpgmm"``).
     """
+    if method not in ("gmm", "dpgmm"):
+        raise ValueError(f"Unknown method: {method}. Use 'gmm' or 'dpgmm'.")
     rng = np.random.default_rng(seed)
 
     # Subsample for efficiency if needed
     data = residual.copy()
+    if method == "dpgmm":
+        max_samples_for_fit = min(max_samples_for_fit, _DPGMM_MAX_SAMPLES)
     if len(data) > max_samples_for_fit:
         indices = rng.choice(len(data), max_samples_for_fit, replace=False)
         data = data[indices]
+
+    if method == "dpgmm":
+        return _determine_threshold_dpgmm(data, max_components, dp_concentration, seed)
 
     X = data.reshape(-1, 1)
 
@@ -121,6 +146,38 @@ def determine_threshold(
         component_stds=stds,
         component_weights=weights,
         bic_scores=scores,
+        baseline_component_idx=baseline_idx,
+    )
+
+
+def _determine_threshold_dpgmm(
+    data: np.ndarray,
+    max_components: int,
+    concentration: Optional[float],
+    seed: Optional[int],
+) -> ThresholdResult:
+    """Threshold from a single Dirichlet-process GMM fit."""
+    from nano_ext.detection.bayes_mixture import fit_dpgmm_1d
+
+    # Event components can be rare (a few % of samples), so prune only
+    # components too small to estimate rather than by weight.
+    fit = fit_dpgmm_1d(
+        data,
+        max_components=max_components,
+        concentration=concentration,
+        min_count=max(10.0, 1e-4 * len(data)),
+        seed=0 if seed is None else seed,
+    )
+    baseline_idx = _identify_baseline_component(fit.means, fit.weights)
+    threshold = _compute_threshold(fit.means, fit.stds, fit.weights, baseline_idx)
+
+    return ThresholdResult(
+        threshold=threshold,
+        n_components=fit.n_components,
+        component_means=fit.means,
+        component_stds=fit.stds,
+        component_weights=fit.weights,
+        bic_scores=[],
         baseline_component_idx=baseline_idx,
     )
 

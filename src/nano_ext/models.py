@@ -118,7 +118,13 @@ class HMMResult:
     log_likelihood : float
         Total log-likelihood of the fitted model.
     bic : float
-        BIC score (lower is better).
+        BIC score (lower is better).  NaN for ``method="sticky_hdp"``.
+    method : str
+        ``"bic"`` (hmmlearn EM + BIC) or ``"sticky_hdp"`` (sticky
+        HDP-HMM Gibbs sampler).
+    n_states_posterior : dict or None
+        For ``"sticky_hdp"``: posterior probability of each number of
+        occupied states, ``{n_states: probability}``.
     """
 
     n_states: int
@@ -129,6 +135,8 @@ class HMMResult:
     dwell_times_s: list
     log_likelihood: float
     bic: float
+    method: str = "bic"
+    n_states_posterior: Optional[dict] = None
 
 
 @dataclass
@@ -174,6 +182,14 @@ class Event:
     direction : EventDirection
         Direction of the current change: DOWN (blockade) or UP (anti-blockade /
         current enhancement). Always DOWN unless detected with EventDirection.BOTH.
+    hmm_result : HMMResult or None
+        Per-event HMM fit (only when HMM analysis is enabled).
+    cluster_id : int or None
+        Event population assigned by
+        :func:`~nano_ext.analysis.clustering.cluster_events` (None when
+        clustering was not run).
+    cluster_prob : float or None
+        Posterior probability of the assigned population.
     """
 
     start_idx: int
@@ -192,6 +208,8 @@ class Event:
     event_type: EventType = EventType.SINGLE
     direction: EventDirection = EventDirection.DOWN
     hmm_result: Optional[HMMResult] = None
+    cluster_id: Optional[int] = None
+    cluster_prob: Optional[float] = None
 
     @property
     def is_multilevel(self) -> bool:
@@ -344,6 +362,14 @@ class DetectionConfig:
     bic_criterion : str
         Information criterion for GMM model selection: ``"bic"``
         (preferred, penalises complexity more) or ``"aic"``.
+    threshold_method : str
+        ``"gmm"`` (fit k = 1..gmm_max_components and select by
+        *bic_criterion*) or ``"dpgmm"`` (single Dirichlet-process GMM fit;
+        the number of components is inferred by the prior).
+    dp_concentration : float, optional
+        Dirichlet-process concentration used by every ``"dpgmm"`` method.
+        Smaller values favour fewer components.  ``None`` uses
+        ``1 / max_components``.
     event_direction : EventDirection
         Which current deviations to treat as events: ``DOWN`` (blockades),
         ``UP`` (spikes / anti-blockades), or ``BOTH``.
@@ -360,6 +386,20 @@ class DetectionConfig:
         for 100 kHz / 10 kHz cut-off recordings.
     max_sublevel_depth : int
         Maximum number of sub-level components (GMM) to test per event.
+    sublevel_method : str
+        ``"gmm"`` (GMM + BIC, default), ``"dpgmm"`` (Dirichlet-process GMM
+        fitted on decorrelated samples) or ``"bocpd"`` (Bayesian online
+        change-point detection).
+    hmm_method : str
+        ``"bic"`` (hmmlearn EM for k = 1..hmm_max_states, select by BIC;
+        requires hmmlearn) or ``"sticky_hdp"`` (sticky HDP-HMM Gibbs
+        sampler; the number of states is inferred, no extra dependency).
+    cluster_events : bool
+        Cluster detected events into populations with a Dirichlet-process
+        GMM on per-event features (see
+        :func:`nano_ext.analysis.clustering.cluster_events`).
+    max_clusters : int
+        Truncation level (upper bound) for event clustering.
     noise_estimation : str
         Method for estimating noise standard deviation: ``"mad"`` (Median
         Absolute Deviation — robust to outliers, recommended) or
@@ -385,6 +425,8 @@ class DetectionConfig:
     gmm_max_components: int = 10
     bic_criterion: str = "bic"
     gmm_max_samples: int = 100_000
+    threshold_method: str = "gmm"
+    dp_concentration: Optional[float] = None
 
     # --- Event detection ---
     event_direction: EventDirection = EventDirection.DOWN
@@ -394,10 +436,16 @@ class DetectionConfig:
     # --- Sublevel analysis ---
     min_segment_samples: int = 50
     max_sublevel_depth: int = 5
+    sublevel_method: str = "gmm"
 
     # --- HMM analysis ---
     hmm_analysis: bool = False
     hmm_max_states: int = 5
+    hmm_method: str = "bic"
+
+    # --- Event population clustering ---
+    cluster_events: bool = False
+    max_clusters: int = 10
 
     # --- Noise estimation ---
     noise_estimation: str = "mad"

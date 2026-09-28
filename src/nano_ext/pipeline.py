@@ -45,6 +45,9 @@ class PipelineResult:
         Detected events (with sub-levels if analysed).
     config : DetectionConfig
         Configuration used.
+    cluster_result : EventClusterResult or None
+        Event population clustering (only when
+        ``config.cluster_events`` is True).
     """
 
     def __init__(
@@ -55,6 +58,7 @@ class PipelineResult:
         threshold_result: ThresholdResult,
         events: list[Event],
         config: DetectionConfig,
+        cluster_result=None,
     ):
         self.signal_data = signal_data
         self.filtered_signal = filtered_signal
@@ -62,6 +66,7 @@ class PipelineResult:
         self.threshold_result = threshold_result
         self.events = events
         self.config = config
+        self.cluster_result = cluster_result
 
     @property
     def n_events(self) -> int:
@@ -127,6 +132,8 @@ class PipelineResult:
             lines.append(
                 f"Depth range:     {min(depths):.2f} – {max(depths):.2f} {self.signal_data.units}"
             )
+        if self.cluster_result is not None:
+            lines.append(f"Populations:     {self.cluster_result.n_clusters}")
         return "\n".join(lines)
 
 
@@ -292,7 +299,7 @@ def run_pipeline(
     if on_step:
         on_step("Determine threshold (GMM)")
     if verbose:
-        logger.info("Determining threshold (GMM + BIC)...")
+        logger.info(f"Determining threshold ({config.threshold_method})...")
     from nano_ext.detection.threshold import determine_threshold
 
     th_result = determine_threshold(
@@ -300,6 +307,8 @@ def run_pipeline(
         max_components=config.gmm_max_components,
         criterion=config.bic_criterion,
         max_samples_for_fit=config.gmm_max_samples,
+        method=config.threshold_method,
+        dp_concentration=config.dp_concentration,
     )
     if verbose:
         logger.info(
@@ -348,6 +357,8 @@ def run_pipeline(
             filter_cutoff=cutoff,
             max_levels=config.max_sublevel_depth,
             min_segment_samples=config.min_segment_samples,
+            method=config.sublevel_method,
+            dp_concentration=config.dp_concentration,
         )
         n_multi = sum(1 for ev in events if ev.is_multilevel)
         if verbose:
@@ -365,6 +376,8 @@ def run_pipeline(
             filtered_signal=filtered,
             sampling_rate=sr,
             max_states=config.hmm_max_states,
+            method=config.hmm_method,
+            filter_cutoff=cutoff,
         )
         n_hmm = sum(1 for ev in events if ev.hmm_result is not None)
         if verbose:
@@ -378,6 +391,22 @@ def run_pipeline(
         from nano_ext.preprocessing.segments import restore_event_timestamps
         events = restore_event_timestamps(events, _single_offset, sr)
 
+    # ---- Step 6: Event population clustering (optional) ----
+    cluster_result = None
+    if config.cluster_events and events:
+        if on_step:
+            on_step("Cluster events (DPGMM)")
+        if verbose:
+            logger.info("Clustering events (Dirichlet-process GMM)...")
+        from nano_ext.analysis.clustering import cluster_events
+        cluster_result = cluster_events(
+            events,
+            max_clusters=config.max_clusters,
+            concentration=config.dp_concentration,
+        )
+        if verbose:
+            logger.info(f"  Event populations: {cluster_result.n_clusters}")
+
     return PipelineResult(
         signal_data=signal_data,
         filtered_signal=filtered,
@@ -385,6 +414,7 @@ def run_pipeline(
         threshold_result=th_result,
         events=events,
         config=config,
+        cluster_result=cluster_result,
     )
 
 

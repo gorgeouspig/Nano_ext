@@ -33,11 +33,13 @@ def write_events_to_csv(events: List[Event], path: str, sampling_rate: float) ->
     ``start_time``, ``end_time``, ``duration``, ``mean_current``,
     ``std_current``, ``baseline_current``, ``depth``,
     ``relative_depth``, ``area``, ``n_levels``, ``event_type``,
-    ``direction``.
+    ``direction``; plus ``cluster_id`` and ``cluster_prob`` when the events
+    were clustered (see :func:`nano_ext.analysis.clustering.cluster_events`).
     """
+    clustered = any(ev.cluster_id is not None for ev in events)
     data = []
     for ev_idx, ev in enumerate(events):
-        data.append({
+        row = {
             "event_id": ev_idx,
             "start_idx": ev.start_idx,
             "end_idx": ev.end_idx,
@@ -53,7 +55,11 @@ def write_events_to_csv(events: List[Event], path: str, sampling_rate: float) ->
             "n_levels": ev.n_levels,
             "event_type": ev.event_type.value,
             "direction": ev.direction.value,
-        })
+        }
+        if clustered:
+            row["cluster_id"] = ev.cluster_id
+            row["cluster_prob"] = ev.cluster_prob
+        data.append(row)
     pd.DataFrame(data).to_csv(path, index=False)
 
 

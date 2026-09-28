@@ -71,10 +71,10 @@ def fit_hmm_event(
                 random_state=random_state,
             )
             model.fit(X)
-            ll = model.score(X)  # average log-likelihood per sample
+            ll = model.score(X)  # total log-likelihood of the whole sequence
             # n_params: k means + k variances + k*(k-1) transitions + (k-1) start probs
             n_params = k * 2 + k * (k - 1) + (k - 1)
-            bic = -2.0 * ll * n_samples + n_params * np.log(n_samples)
+            bic = -2.0 * ll + n_params * np.log(n_samples)
 
             if bic < best_bic:
                 best_bic = bic
@@ -90,7 +90,7 @@ def fit_hmm_event(
                     transition_matrix=trans,
                     state_sequence=state_seq,
                     dwell_times_s=dwell_times,
-                    log_likelihood=float(ll * n_samples),
+                    log_likelihood=float(ll),
                     bic=float(bic),
                 )
         except Exception:
@@ -127,6 +127,8 @@ def analyze_events_hmm(
     filtered_signal: np.ndarray,
     sampling_rate: float,
     max_states: int = 5,
+    method: str = "bic",
+    filter_cutoff: Optional[float] = None,
 ) -> list:
     """Fit a Gaussian HMM to each event's waveform in-place.
 
@@ -140,14 +142,29 @@ def analyze_events_hmm(
         Filtered signal array (same coordinate system as event indices).
     sampling_rate : float
     max_states : int
-        Maximum number of hidden states to try per event.
+        Maximum number of hidden states to try per event (the weak-limit
+        truncation for ``"sticky_hdp"``).
+    method : str
+        ``"bic"`` (hmmlearn EM + BIC) or ``"sticky_hdp"`` (sticky HDP-HMM,
+        see :func:`nano_ext.detection.hdphmm.fit_sticky_hdp_hmm`).
+    filter_cutoff : float, optional
+        Low-pass cutoff in Hz; used by ``"sticky_hdp"`` to thin
+        autocorrelated samples.
 
     Returns
     -------
     list[Event]
         Same list with ``hmm_result`` populated.
     """
+    if method not in ("bic", "sticky_hdp"):
+        raise ValueError(f"Unknown HMM method: {method}. Use 'bic' or 'sticky_hdp'.")
     for ev in events:
         seg = filtered_signal[ev.start_idx:ev.end_idx]
-        ev.hmm_result = fit_hmm_event(seg, sampling_rate, max_states=max_states)
+        if method == "bic":
+            ev.hmm_result = fit_hmm_event(seg, sampling_rate, max_states=max_states)
+        else:
+            from nano_ext.detection.hdphmm import fit_sticky_hdp_hmm
+            ev.hmm_result = fit_sticky_hdp_hmm(
+                seg, sampling_rate, filter_cutoff=filter_cutoff, max_states=max_states,
+            )
     return events
