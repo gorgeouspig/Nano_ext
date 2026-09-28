@@ -118,7 +118,7 @@ class PipelineResult:
             f"Duration:        {self.signal_data.duration_sec:.3f} s",
             f"Samples:         {self.signal_data.n_samples}",
             f"Noise std:       {noise_str} {units}",
-            f"GMM components:  {tr.n_components}",
+            f"Mixture comps.:  {tr.n_components}",
             f"{thr_label}{thr_display:.4f} {units}",
             f"Events detected: {self.n_events}",
             f"Multi-level:     {self.n_multilevel}",
@@ -297,7 +297,7 @@ def run_pipeline(
 
     # ---- Step 3: Threshold determination ----
     if on_step:
-        on_step("Determine threshold (GMM)")
+        on_step(f"Determine threshold ({config.threshold_method})")
     if verbose:
         logger.info(f"Determining threshold ({config.threshold_method})...")
     from nano_ext.detection.threshold import determine_threshold

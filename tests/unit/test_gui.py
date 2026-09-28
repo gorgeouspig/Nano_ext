@@ -82,6 +82,28 @@ def demo_abf(tmp_path_factory):
     return path
 
 
+class TestNativeDialog:
+    def test_parse_dialog_output(self):
+        from nano_ext.gui.service import DialogUnavailable, parse_dialog_output
+        assert parse_dialog_output('{"path": "/a/b.abf"}\n') == "/a/b.abf"
+        assert parse_dialog_output('{"path": ""}') is None  # cancelled
+        with pytest.raises(DialogUnavailable, match="no display"):
+            parse_dialog_output('{"error": "no display available"}')
+        with pytest.raises(DialogUnavailable, match="boom"):
+            parse_dialog_output("", "Traceback...\nboom")
+
+    def test_unavailable_without_display(self, monkeypatch):
+        """Without a display (CI, SSH) the dialog reports why instead of hanging."""
+        from nano_ext.gui import service
+        monkeypatch.delenv("DISPLAY", raising=False)
+        monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+        import sys
+        if sys.platform != "linux":
+            pytest.skip("display detection differs on this platform")
+        with pytest.raises(service.DialogUnavailable):
+            service.native_file_dialog("/", timeout=60)
+
+
 class TestService:
     def test_list_directory(self, demo_abf):
         from nano_ext.gui.service import list_directory
@@ -225,6 +247,26 @@ class TestAppHelpers:
         names = [t.name for t in fig.data]
         assert {"Filtered", "Baseline", "Threshold", "Events"} <= set(names)
         assert info["events_visible"] >= 1
+
+    def test_browse_entries(self, demo_abf):
+        from nano_ext.gui.app import browse_entries
+        folder, entries = browse_entries(str(demo_abf.parent))
+        assert entries[0]["kind"] == "dir" and entries[0]["label"].startswith("⬆")
+        assert {"kind": "file", "path": str(demo_abf)}.items() <= next(
+            e for e in entries if e["kind"] == "file").items()
+        assert [e["label"] for e in entries if e["kind"] == "dir"][1:] == ["📁  sub"]
+
+    def test_apply_selection_action(self):
+        from nano_ext.gui.app import apply_selection_action
+        rows, mode = apply_selection_action("keep", [2.0, 3.0], [], "all", 10.0)
+        assert mode == "keep" and rows == [{"start": 2.0, "end": 3.0}]
+        rows, mode = apply_selection_action("exclude", [5.0, 6.0], rows, mode, 10.0)
+        assert mode == "exclude" and rows == [{"start": 5.0, "end": 6.0}]  # keep-range dropped
+        rows, mode = apply_selection_action("exclude", [1.0, 1.5], rows, mode, 10.0)
+        assert [r["start"] for r in rows] == [1.0, 5.0]
+        rows2, mode2 = apply_selection_action("view", [7.0, 12.0], rows, "exclude", 10.0)
+        assert rows2[-1] == {"start": 7.0, "end": 10.0} and mode2 == "exclude"
+        assert apply_selection_action("keep", None, rows, mode, 10.0) == (rows, mode)
 
     def test_browse_options(self, demo_abf):
         from nano_ext.gui.app import browse_options

@@ -26,8 +26,8 @@ nano-ext gui            # opens the analysis app in your browser
 ## Features
 
 - **Browser GUI** (`nano-ext gui`): load ABF / raw binary files, zoom smoothly through 150 M-sample traces (view-dependent min/max downsampling), drag or zoom to exclude artifacts, run any analysis method, and inspect events, populations, dwell-time fits and noise spectra — then export CSV / JSON. Runs locally; your data never leave the machine.
-- **Objective Thresholding**: Gaussian Mixture Models (GMM) + Bayesian Information Criterion (BIC) automatically determine the number of current levels and the optimal detection threshold.
-- **Objective Sub-level Analysis**: The same GMM + BIC approach is applied recursively within each event to identify sub-steps without any user-tuned sigma thresholds.
+- **Objective Thresholding**: a Dirichlet-process Gaussian mixture (default since 1.2; GMM + BIC remains available) infers the number of current levels and places the detection threshold between the open-pore and event components.
+- **Objective Sub-level Analysis**: the same Dirichlet-process mixture, fitted on decorrelated samples within each event, identifies sub-steps without user-tuned sigma thresholds. On synthetic benchmarks it recovers the true number of levels for 100 % of events (GMM + BIC: 66 %).
 - **Drift Handling**: Iterative local baseline estimation with polynomial/spline global detrending handles gradual open-pore current shifts.
 - **Multi-directional Detection**: Detect downward blockades, upward deflections, or both simultaneously. Each event is tagged with its direction.
 - **Automated Parameter Tuning**: `suggest_config()` estimates the noise floor from the signal and automatically sets `min_event_duration`, `merge_gap`, and `baseline_window` — a good starting point before manual refinement.
@@ -39,7 +39,7 @@ nano-ext gui            # opens the analysis app in your browser
 - **Interactive Jupyter UI**: `notebooks/interactive_analysis.ipynb` provides a widget-based GUI for interactive parameter exploration and result inspection — no terminal required during analysis.
 - **Per-Event Waveform Viewer**: Browse individual events with zoomed two-panel figures (signal + residual + sublevel boundaries). Export any event's waveform as `.npz` or `.csv` for downstream ML workflows.
 - **HMM Multi-state Analysis**: Gaussian HMM fitting per event with BIC-based state-count selection. Reports state means, transition matrix, and dwell-time distributions. Enable with `--hmm` (requires `pip install "nano_ext[hmm]"`), or use `--hmm-method sticky_hdp` for a sticky HDP-HMM that infers the number of states (no extra dependency).
-- **Bayesian Nonparametric Options**: Dirichlet-process GMMs (`--threshold-method dpgmm`, `--sublevel-method dpgmm`) infer the number of current levels in a single fit instead of scanning k by BIC; Bayesian online change-point detection (`--sublevel-method bocpd`) segments events with a hazard-rate prior instead of a penalty.
+- **Selectable Methods**: `--threshold-method {dpgmm,gmm}` and `--sublevel-method {dpgmm,gmm,bocpd}` (default `dpgmm`; `gmm` reproduces results from ≤ 1.1). Bayesian online change-point detection (`bocpd`) is experimental — it over-segments traces with strong 1/f noise.
 - **Event Population Clustering**: `--cluster` groups events into populations (relative depth × log dwell time) with a Dirichlet-process GMM — the number of populations is inferred, and each event gets a membership probability.
 - **Bayesian Event Statistics**: `--bayes-stats` reports the capture rate with a credible interval and fits a mixture of exponentials to dwell times, giving the posterior number of time constants and their credible intervals (per population with `--cluster`).
 - **Power Spectral Density**: Welch-method PSD for noise diagnostics and effective filter-cutoff estimation. Compare sample vs. control with `nano-ext spectrum` or the Diagnostics panel in the Jupyter UI.
@@ -82,10 +82,12 @@ nano-ext gui --port 8060 --no-browser
 
 The app opens at `http://127.0.0.1:8050/`. Work top to bottom in the left panel:
 
-1. **Recording** — browse folders (📁) or paste a path, choose the channel, *Load recording*. Raw binary files ask for the sampling rate and data type.
-2. **Analysis range** — analyse everything, a single range, or everything except artifact ranges. Zoom the trace (or box-select with ▭) and press *Add current view* / *Add selection*; ranges are shaded on the trace and can be edited in the table.
+1. **Recording** — press **Browse…** to pick a file with your system's file dialog (or paste a path, or use *Browse folders in this page*); the recording loads as soon as you choose it. Pick the channel for multi-channel ABF files; raw binary files ask for the sampling rate and data type. Optionally choose a **negative control** (analyte-free recording): its noise replaces the sample's noise estimate and it is overlaid in the noise spectrum.
+2. **Analysis range** — switch the mouse above the trace from **🔍 Zoom** to **↔ Select range**, drag across a region, then press **Analyze only this** or **Exclude this** (e.g. zap artifacts). Ranges are shaded on the trace (green = analysed, red = excluded) and listed in an editable table; *Use current view* takes the zoomed window instead.
 3. **Settings** — event direction, auto-tune, filter/baseline overrides, and the methods for threshold, sub-levels, HMM, population clustering and Bayesian statistics.
 4. **Run analysis** — runs in the background (progress below the button). Results appear on the trace (filtered signal, baseline, threshold, event markers) and in the tabs: *Summary* (residual histogram with the fitted mixture), *Events* (sortable table + per-event zoom), *Scatter* (dwell time vs. relative depth by population), *Dwell & statistics*, *Noise (PSD)* and *Export*.
+
+The **Browse…** buttons use Python's Tk file dialog (included with the python.org and conda builds; on Debian/Ubuntu `sudo apt install python3-tk`). Without Tk, or when the server runs on another machine, the in-page folder list is used instead.
 
 The GUI keeps one recording in memory per server (single user); bind it to `127.0.0.1` (the default) unless you trust the network, since it can read any file your user can.
 
@@ -134,7 +136,7 @@ nano-ext analyze recording.abf -o ./results \
 
 # Bayesian / nonparametric variants
 nano-ext analyze recording.abf -o ./results --auto-tune \
-    --threshold-method dpgmm --sublevel-method bocpd \
+    --threshold-method dpgmm --sublevel-method dpgmm \
     --hmm --hmm-method sticky_hdp \
     --cluster --bayes-stats
 ```
@@ -228,11 +230,11 @@ print(dw.n_components, dw.tau_mean, dw.n_components_probs)
 - Two-phase local baseline estimation: early iterations use a high-percentile sliding window (Rust-accelerated) to robustly establish an event mask; a final pass computes the median of the masked open-pore samples, yielding an unbiased estimate of the true open-pore current level
 
 ### 2. Threshold Determination
-- Fit GMM with k = 1 … K components to the baseline-corrected residual
+- `threshold_method="gmm"` (default up to 1.1): fit GMM with k = 1 … K components to the baseline-corrected residual
 - Select optimal k via BIC (or AIC)
 - Identify the baseline component (closest to zero in residual space)
 - Compute the threshold as the Gaussian crossing point between the baseline component and the nearest event component
-- `threshold_method="dpgmm"`: a single truncated Dirichlet-process GMM fit (variational) replaces the k-scan; unused components are pruned, and adjacent components whose two-component mixture is unimodal are merged, so the baseline is one component even when the noise is slightly non-Gaussian
+- `threshold_method="dpgmm"` (default): a single truncated Dirichlet-process GMM fit (variational) replaces the k-scan; unused components are pruned, and adjacent components whose two-component mixture is unimodal are merged, so the baseline is one component even when the noise is slightly non-Gaussian
 
 ### 3. Event Detection
 - Binary mask on threshold crossings → run-length encoding → gap merging
@@ -241,8 +243,8 @@ print(dw.n_components, dw.tau_mean, dw.n_components_probs)
 
 ### 4. Sub-level Analysis (Optional)
 - Filter transients at event edges are trimmed (≈ 2 / filter_cutoff seconds per side) to prevent the filter's finite rise time from being misidentified as a current step
-- `sublevel_method="gmm"` (default): GMM + BIC selects the number of levels; samples are assigned to levels and run-length encoded into segments
-- `sublevel_method="dpgmm"`: Dirichlet-process GMM fitted on samples thinned to about one per filter correlation time (`sampling_rate / (2 · cutoff)`), so autocorrelated samples are not counted as independent evidence
+- `sublevel_method="dpgmm"` (default since 1.2): Dirichlet-process GMM fitted on samples thinned to about one per filter correlation time (`sampling_rate / (2 · cutoff)`), so autocorrelated samples are not counted as independent evidence
+- `sublevel_method="gmm"` (default up to 1.1): GMM + BIC selects the number of levels; samples are assigned to levels and run-length encoded into segments. It tends to over-split long levels in 1/f noise
 - `sublevel_method="bocpd"`: Bayesian online change-point detection (Adams & MacKay, 2007) with a Normal-Inverse-Gamma level model on the thinned samples; segments whose means differ by less than 4 standard errors are grouped into the same level
 - Segments shorter than `min_segment_samples` are absorbed into their nearest neighbour
 - Per-sub-level depth and relative depth from baseline are stored and exportable via `write_sublevels_to_csv`

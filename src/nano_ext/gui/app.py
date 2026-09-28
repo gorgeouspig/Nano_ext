@@ -24,8 +24,10 @@ MAX_EVENT_SHAPES = 400      # shade event spans only when fewer are visible
 class GuiState:
     """Server-side state shared by all callbacks (one user, one recording)."""
 
-    def __init__(self, folder: Optional[str] = None):
+    def __init__(self, folder: Optional[str] = None, local: bool = True):
         self.lock = threading.RLock()
+        self.local = local        # server runs on the user's machine (OS dialogs allowed)
+        self.channel = 0
         self.folder = str(Path(folder or os.getcwd()).expanduser().resolve())
         self.path: Optional[str] = None
         self.info: dict = {}
@@ -45,12 +47,44 @@ class GuiState:
 # Pure helpers used by callbacks (unit-tested without Dash)
 # ---------------------------------------------------------------------------
 
-def browse_options(folder: str) -> tuple[str, list[dict]]:
+def browse_entries(folder: str) -> tuple[str, list[dict]]:
+    """Entries for the in-page folder list: parent, sub-folders, recordings."""
     folder, dirs, files = service.list_directory(folder)
-    opts = [{"label": "⬆  ..", "value": "dir:" + str(folder.parent)}]
-    opts += [{"label": f"📁  {d.name}", "value": "dir:" + str(d)} for d in dirs]
-    opts += [{"label": f"📄  {f.name}", "value": "file:" + str(f)} for f in files]
-    return str(folder), opts
+    entries = [{"label": "⬆  ..", "kind": "dir", "path": str(folder.parent)}]
+    entries += [{"label": f"📁  {d.name}", "kind": "dir", "path": str(d)} for d in dirs]
+    entries += [{"label": f"📄  {f.name}", "kind": "file", "path": str(f)} for f in files]
+    return str(folder), entries
+
+
+def browse_options(folder: str) -> tuple[str, list[dict]]:
+    """Dropdown-style options (kept for scripts built on 1.1)."""
+    folder, entries = browse_entries(folder)
+    return folder, [{"label": e["label"], "value": f"{e['kind']}:{e['path']}"} for e in entries]
+
+
+def apply_selection_action(action: str, selection, rows, mode, duration: float):
+    """New ``(rows, mode)`` after acting on a selected time range.
+
+    ``action`` is ``"keep"`` (analyse only this range), ``"exclude"`` (add
+    it to the excluded ranges) or ``"view"`` (use it according to *mode*).
+    """
+    if selection is None:
+        return rows, mode
+    rng = (float(selection[0]), float(selection[1]))
+    ranges = ranges_from_rows(rows)
+    if action == "keep":
+        mode, ranges = "keep", [rng]
+    elif action == "exclude":
+        ranges = (ranges if mode == "exclude" else []) + [rng]
+        mode = "exclude"
+    else:  # "view": follow the current mode
+        if mode == "keep":
+            ranges = [rng]
+        elif mode == "exclude":
+            ranges = ranges + [rng]
+        else:
+            mode, ranges = "keep", [rng]
+    return rows_from_ranges(service.normalise_ranges(ranges, duration)), mode
 
 
 def main_view(state: GuiState, t0: Optional[float], t1: Optional[float],
@@ -215,20 +249,28 @@ def build_layout(state: GuiState, path: Optional[str] = None):
                 {"label": "Sticky HDP-HMM (states inferred)", "value": "sticky_hdp"},
                 {"label": "EM + BIC (needs hmmlearn)", "value": "bic",
                  "disabled": not service.hmm_bic_available()}]
+    native = {} if state.local else {"display": "none"}
 
     sidebar = html.Div([
         html.Div([html.Span("Nano_ext", className="brand"),
                   html.Span("nanopore event analysis", className="brand-sub")], className="brand-row"),
 
         _section("1 · Recording", [
-            _field("Folder", html.Div([
-                dcc.Input(id="folder", type="text", value=state.folder, debounce=True,
-                          className="grow"),
+            _field("Recording file", html.Div([
+                dcc.Input(id="path", type="text", debounce=True, value=path,
+                          placeholder="/path/to/recording.abf", className="grow"),
+                html.Button("Browse…", id="browse-native", className="btn", style=native,
+                            title="Choose a file with your computer's file dialog"),
             ], className="row")),
-            dcc.Dropdown(id="browse", placeholder="Open a folder or a recording…",
-                         clearable=False, className="browse"),
-            _field("File", dcc.Input(id="path", type="text", debounce=True, value=path,
-                                     placeholder="/path/to/recording.abf", className="grow")),
+            dcc.Loading(html.Div(id="dialog-status", className="hint"), type="dot"),
+            html.Details([
+                html.Summary("Browse folders in this page"),
+                html.Div([
+                    dcc.Input(id="folder", type="text", value=state.folder, debounce=True,
+                              className="grow"),
+                    html.Div(id="browser-list", className="browser-list"),
+                ], className="section-body"),
+            ], id="browser-details", className="sub", open=not state.local),
             html.Div(id="file-info", className="hint"),
             html.Div([
                 _field("Channel", dcc.Dropdown(id="channel", clearable=False,
@@ -242,6 +284,19 @@ def build_layout(state: GuiState, path: Optional[str] = None):
             ], id="binary-box", style={"display": "none"}),
             html.Button("Load recording", id="load", className="btn primary"),
             dcc.Loading(html.Div(id="load-status", className="hint"), type="dot"),
+
+            html.Div([
+                _field("Negative control (optional)", html.Div([
+                    dcc.Input(id="control-path", type="text", debounce=True,
+                              placeholder="analyte-free recording", className="grow"),
+                    html.Button("Browse…", id="control-browse", className="btn", style=native),
+                    html.Button("✕", id="control-clear", className="btn ghost small",
+                                title="Remove the control"),
+                ], className="row"),
+                    "Same pore and conditions without analyte: its noise replaces the sample's "
+                    "noise estimate (useful for event-dense recordings) and it is overlaid in the PSD."),
+                dcc.Loading(html.Div(id="control-info", className="hint"), type="dot"),
+            ], className="control-box"),
         ]),
 
         _section("2 · Analysis range", [
@@ -250,14 +305,16 @@ def build_layout(state: GuiState, path: Optional[str] = None):
                 {"label": " Only one range", "value": "keep"},
                 {"label": " Exclude artifact ranges", "value": "exclude"},
             ]),
-            html.Div("Zoom the trace or box-select (toolbar ▭), then add the range.",
-                     className="hint"),
             html.Div([
-                html.Button("Add selection", id="add-selection", className="btn"),
-                html.Button("Add current view", id="add-view", className="btn"),
-                html.Button("Clear", id="clear-ranges", className="btn ghost"),
+                "To pick a range on the trace: switch the mouse to ",
+                html.B("↔ Select range"), " (above the trace), drag across the region, then press ",
+                html.B("Analyze only this"), " or ", html.B("Exclude this"), ".",
+            ], className="hint"),
+            html.Div([
+                html.Button("Use current view", id="add-view", className="btn",
+                            title="Use the zoomed time window as the range"),
+                html.Button("Clear ranges", id="clear-ranges", className="btn ghost"),
             ], className="row wrap"),
-            html.Div(id="selection-label", className="hint"),
             dash_table.DataTable(
                 id="ranges", columns=[{"name": "start (s)", "id": "start", "type": "numeric"},
                                       {"name": "end (s)", "id": "end", "type": "numeric"}],
@@ -284,18 +341,17 @@ def build_layout(state: GuiState, path: Optional[str] = None):
                                                options=["none", "linear", "polynomial", "spline"])),
                 _field("Min. event duration (ms)", dcc.Input(id="min-dur", type="number", placeholder="auto")),
                 _field("Merge gap (ms)", dcc.Input(id="merge-gap", type="number", placeholder="auto")),
-                _field("Negative control file (optional)",
-                       dcc.Input(id="control-path", type="text", debounce=True, placeholder="/path/to/control.abf",
-                                 className="grow")),
             ], className="section-body")], className="sub"),
             html.Details([html.Summary("Methods"), html.Div([
-                _field("Threshold", dcc.Dropdown(id="thr-method", value="gmm", clearable=False, options=[
-                    {"label": "GMM + BIC", "value": "gmm"},
-                    {"label": "Dirichlet-process GMM", "value": "dpgmm"}])),
-                _field("Sub-levels", dcc.Dropdown(id="sub-method", value="gmm", clearable=False, options=[
-                    {"label": "GMM + BIC", "value": "gmm"},
-                    {"label": "Dirichlet-process GMM", "value": "dpgmm"},
-                    {"label": "Bayesian change points (BOCPD)", "value": "bocpd"}])),
+                _field("Threshold", dcc.Dropdown(id="thr-method", value=s["threshold_method"],
+                                                 clearable=False, options=[
+                    {"label": "Dirichlet-process GMM (default)", "value": "dpgmm"},
+                    {"label": "GMM + BIC (≤ v1.1 default)", "value": "gmm"}])),
+                _field("Sub-levels", dcc.Dropdown(id="sub-method", value=s["sublevel_method"],
+                                                  clearable=False, options=[
+                    {"label": "Dirichlet-process GMM (default)", "value": "dpgmm"},
+                    {"label": "GMM + BIC (≤ v1.1 default)", "value": "gmm"},
+                    {"label": "Bayesian change points (experimental)", "value": "bocpd"}])),
                 _field("HMM per event", dcc.Dropdown(id="hmm", value="off", clearable=False, options=hmm_opts)),
                 dcc.Checklist(id="extras", className="checks", value=[], options=[
                     {"label": " Cluster events into populations", "value": "cluster"},
@@ -355,9 +411,22 @@ def build_layout(state: GuiState, path: Optional[str] = None):
 
     main = html.Div([
         html.Div([
-            html.Div(id="view-info", className="hint"),
+            html.Div([
+                html.Span("Mouse:", className="hint"),
+                dcc.RadioItems(id="mouse-mode", value="zoom", className="segmented", options=[
+                    {"label": "🔍 Zoom", "value": "zoom"},
+                    {"label": "↔ Select range", "value": "select"},
+                ]),
+            ], className="row"),
+            html.Div(id="view-info", className="hint grow-text"),
             html.Button("Reset view", id="reset-view", className="btn ghost small"),
-        ], className="row between"),
+        ], className="row between toolbar"),
+        html.Div([
+            html.Span(id="selection-label"),
+            html.Button("Analyze only this", id="sel-keep", className="btn primary small"),
+            html.Button("Exclude this", id="sel-exclude", className="btn danger small"),
+            html.Button("Cancel", id="sel-cancel", className="btn ghost small"),
+        ], id="selection-bar", className="selection-bar", style={"display": "none"}),
         dcc.Graph(id="wave", style={"height": "48vh"},
                   config={"scrollZoom": True, "displaylogo": False,
                           "modeBarButtonsToRemove": ["lasso2d", "autoScale2d"]}),
@@ -370,6 +439,8 @@ def build_layout(state: GuiState, path: Optional[str] = None):
         dcc.Store(id="data-version", data=0),
         dcc.Store(id="result-version", data=0),
         dcc.Store(id="selected-event", data=None),
+        dcc.Store(id="autoload", data=0),
+        dcc.Store(id="browser-entries", data=[]),
         dcc.Interval(id="poll", interval=500, disabled=True),
     ]
     return html.Div([sidebar, main, *stores], className="app")
@@ -379,12 +450,16 @@ def build_layout(state: GuiState, path: Optional[str] = None):
 # App factory and callbacks
 # ---------------------------------------------------------------------------
 
-def create_app(folder: Optional[str] = None, path: Optional[str] = None):
-    """Create the Dash app (call ``.run()`` on the result)."""
-    import dash
-    from dash import Input, Output, State, ctx, dcc, html, no_update
+def create_app(folder: Optional[str] = None, path: Optional[str] = None, local: bool = True):
+    """Create the Dash app (call ``.run()`` on the result).
 
-    state = GuiState(folder)
+    ``local`` enables the operating-system file dialog, which opens on the
+    machine running the server — only sensible when that is the user's own.
+    """
+    import dash
+    from dash import ALL, Input, Output, State, ctx, html, no_update
+
+    state = GuiState(folder, local=local)
     app = dash.Dash(
         __name__, title="Nano_ext", update_title=None,
         assets_folder=str(Path(__file__).parent / "assets"),
@@ -392,27 +467,58 @@ def create_app(folder: Optional[str] = None, path: Optional[str] = None):
     app.layout = build_layout(state, str(Path(path).expanduser()) if path else None)
     app._nano_state = state  # for tests / debugging
 
-    # --- Browsing ---------------------------------------------------------
-    @app.callback(Output("browse", "options"), Output("folder", "value"),
-                  Input("folder", "value"))
+    # --- Choosing files -----------------------------------------------------
+    @app.callback(Output("browser-list", "children"), Output("browser-entries", "data"),
+                  Output("folder", "value"), Input("folder", "value"))
     def _browse(folder):
         try:
-            resolved, opts = browse_options(folder or state.folder)
-        except (NotADirectoryError, OSError):
-            return [], no_update
+            resolved, entries = browse_entries(folder or state.folder)
+        except (NotADirectoryError, OSError) as exc:
+            return html.Div(f"⚠️ {exc}", className="hint"), [], no_update
         state.folder = resolved
-        return opts, (resolved if resolved != folder else no_update)
+        buttons = [html.Button(e["label"], id={"type": "entry", "index": i},
+                               className=f"entry {e['kind']}", n_clicks=0)
+                   for i, e in enumerate(entries)]
+        if len(entries) == 1:
+            buttons.append(html.Div("No sub-folders or recordings here.", className="hint"))
+        return buttons, entries, (resolved if resolved != folder else no_update)
 
-    @app.callback(Output("folder", "value", allow_duplicate=True), Output("path", "value"),
-                  Output("browse", "value"),
-                  Input("browse", "value"), prevent_initial_call=True)
-    def _pick(value):
-        if not value:
+    @app.callback(Output("folder", "value", allow_duplicate=True),
+                  Output("path", "value", allow_duplicate=True),
+                  Output("autoload", "data", allow_duplicate=True),
+                  Input({"type": "entry", "index": ALL}, "n_clicks"),
+                  State("browser-entries", "data"), State("autoload", "data"),
+                  prevent_initial_call=True)
+    def _pick_entry(clicks, entries, autoload):
+        trig = ctx.triggered_id
+        if not isinstance(trig, dict) or not any(clicks or []):
             return no_update, no_update, no_update
-        kind, target = value.split(":", 1)
-        if kind == "dir":
-            return target, no_update, None
-        return no_update, target, None
+        i = trig["index"]
+        if i >= len(entries) or not clicks[i]:
+            return no_update, no_update, no_update
+        entry = entries[i]
+        if entry["kind"] == "dir":
+            return entry["path"], no_update, no_update
+        return no_update, entry["path"], (autoload or 0) + 1
+
+    @app.callback(Output("path", "value", allow_duplicate=True),
+                  Output("autoload", "data", allow_duplicate=True),
+                  Output("dialog-status", "children"),
+                  Output("browser-details", "open"),
+                  Input("browse-native", "n_clicks"),
+                  State("path", "value"), State("autoload", "data"),
+                  prevent_initial_call=True)
+    def _native_dialog(_, current, autoload):
+        start = str(Path(current).expanduser().parent) if current else state.folder
+        try:
+            chosen = service.native_file_dialog(start, title="Open recording")
+        except service.DialogUnavailable as exc:
+            return (no_update, no_update,
+                    f"The system file dialog is unavailable ({exc}); use the folder list below.", True)
+        if not chosen:
+            return no_update, no_update, "", no_update
+        state.folder = str(Path(chosen).parent)
+        return chosen, (autoload or 0) + 1, "", no_update
 
     @app.callback(Output("file-info", "children"), Output("channel", "options"),
                   Output("channel", "value"), Output("binary-box", "style"),
@@ -438,29 +544,74 @@ def create_app(folder: Optional[str] = None, path: Optional[str] = None):
     # --- Loading ------------------------------------------------------------
     @app.callback(Output("load-status", "children"), Output("data-version", "data"),
                   Output("view-range", "data", allow_duplicate=True),
-                  Input("load", "n_clicks"),
-                  State("path", "value"), State("channel", "value"), State("bin-sr", "value"),
+                  Input("load", "n_clicks"), Input("autoload", "data"), Input("channel", "value"),
+                  State("path", "value"), State("bin-sr", "value"),
                   State("bin-dtype", "value"), State("bin-scale", "value"),
                   State("data-version", "data"), prevent_initial_call=True)
-    def _load(_, path, channel, sr, dtype, scale, version):
+    def _load(_, _auto, channel, path, sr, dtype, scale, version):
+        trig = ctx.triggered_id
+        if trig == "channel":
+            # Re-load only when switching channel of the recording on screen.
+            if state.sd is None or path != state.path or channel == state.channel:
+                return no_update, no_update, no_update
+        if trig == "autoload" and path != state.path:
+            channel = 0  # a new file: its channel list is not populated yet
         if not path:
             return "Choose a file first.", no_update, no_update
         if state.job.status == "running":
             return "Wait for the running analysis to finish.", no_update, no_update
+        is_abf = Path(path).suffix.lower() == ".abf"
+        if not is_abf and not sr:
+            return "Raw binary file: enter the sampling rate, then press Load.", no_update, no_update
         try:
             sd = service.load_recording(path, channel=channel or 0, sampling_rate=sr,
                                         dtype=dtype or "int16", scale_factor=scale or 1.0)
         except Exception as exc:
             return f"⚠️ {exc}", no_update, no_update
         with state.lock:
-            state.sd, state.path = sd, path
+            state.sd, state.path, state.channel = sd, path, channel or 0
             state.index = TraceIndex(sd)
             state.job = service.Job()
             state.result_version += 1
-        return (f"Loaded {len(sd.signal) / 1e6:.1f} M samples "
-                f"({sd.duration_sec:.1f} s, {sd.units})."), (version or 0) + 1, None
+        return (f"Loaded {Path(path).name} (channel {channel or 0}): {len(sd.signal) / 1e6:.1f} M samples, "
+                f"{sd.duration_sec:.1f} s, {sd.units}."), (version or 0) + 1, None
 
-    # --- View / ranges ------------------------------------------------------
+    # --- Negative control -----------------------------------------------------
+    @app.callback(Output("control-info", "children"),
+                  Output("control-path", "value"),
+                  Input("control-path", "value"), Input("control-browse", "n_clicks"),
+                  Input("control-clear", "n_clicks"),
+                  prevent_initial_call=True)
+    def _control(path, _browse_clicks, _clear):
+        trig = ctx.triggered_id
+        if trig == "control-clear":
+            state.control, state.control_path = None, None
+            return "", ""
+        if trig == "control-browse":
+            start = str(Path(state.path).parent) if state.path else state.folder
+            try:
+                path = service.native_file_dialog(start, title="Open negative control")
+            except service.DialogUnavailable as exc:
+                return f"System file dialog unavailable ({exc}); paste the path instead.", no_update
+            if not path:
+                return no_update, no_update
+        if not path:
+            state.control, state.control_path = None, None
+            return "", no_update
+        try:
+            ctrl = service.load_recording(path, sampling_rate=state.sd.sampling_rate if state.sd else None)
+        except Exception as exc:
+            state.control, state.control_path = None, None
+            return f"⚠️ {exc}", no_update
+        state.control, state.control_path = ctrl, path
+        warn = ""
+        if state.sd is not None and ctrl.sampling_rate != state.sd.sampling_rate:
+            warn = " ⚠️ sampling rate differs from the recording"
+        return (f"✓ Control: {Path(path).name} · {ctrl.duration_sec:.1f} s · "
+                f"{ctrl.sampling_rate / 1e3:g} kHz — used in the next run{warn}"), (
+                    path if trig == "control-browse" else no_update)
+
+    # --- View / selection / ranges ------------------------------------------
     @app.callback(Output("view-range", "data"), Input("wave", "relayoutData"),
                   Input("reset-view", "n_clicks"), State("view-range", "data"),
                   prevent_initial_call=True)
@@ -470,39 +621,50 @@ def create_app(folder: Optional[str] = None, path: Optional[str] = None):
         new = parse_relayout(relayout, current)
         return no_update if new == current else new
 
-    @app.callback(Output("selection", "data"), Output("selection-label", "children"),
-                  Input("wave", "selectedData"), prevent_initial_call=True)
-    def _select(selected):
-        rng = selection_range(selected)
-        if rng is None:
-            return None, ""
-        return rng, f"Selected {rng[0]:.4f} – {rng[1]:.4f} s"
+    @app.callback(Output("selection", "data"),
+                  Input("wave", "selectedData"), Input("sel-cancel", "n_clicks"),
+                  Input("data-version", "data"),
+                  prevent_initial_call=True)
+    def _select(selected, _cancel, _dv):
+        if ctx.triggered_id != "wave":
+            return None
+        return selection_range(selected)
 
-    @app.callback(Output("ranges", "data"),
-                  Input("add-selection", "n_clicks"), Input("add-view", "n_clicks"),
-                  Input("clear-ranges", "n_clicks"),
+    @app.callback(Output("selection-bar", "style"), Output("selection-label", "children"),
+                  Input("selection", "data"))
+    def _selection_bar(sel):
+        if not sel:
+            return {"display": "none"}, ""
+        return {}, f"Selected {sel[0]:.4f} – {sel[1]:.4f} s ({(sel[1] - sel[0]) * 1e3:.1f} ms):"
+
+    @app.callback(Output("ranges", "data"), Output("range-mode", "value"),
+                  Output("selection", "data", allow_duplicate=True),
+                  Input("sel-keep", "n_clicks"), Input("sel-exclude", "n_clicks"),
+                  Input("add-view", "n_clicks"), Input("clear-ranges", "n_clicks"),
                   State("selection", "data"), State("view-range", "data"),
                   State("ranges", "data"), State("range-mode", "value"),
                   prevent_initial_call=True)
-    def _ranges(_a, _b, _c, selection, view, rows, mode):
+    def _ranges(_k, _e, _v, _c, selection, view, rows, mode):
         trig = ctx.triggered_id
         if trig == "clear-ranges":
-            return []
-        rng = selection if trig == "add-selection" else view
-        if rng is None:
-            if state.sd is None:
-                return no_update
-            rng = [state.index.t_start, state.index.t_end]
-        ranges = ranges_from_rows(rows)
-        ranges = [tuple(rng)] if mode == "keep" else ranges + [tuple(rng)]
-        dur = state.index.t_end if state.index else float("inf")
-        return rows_from_ranges(service.normalise_ranges(ranges, dur))
+            return [], "all", no_update
+        if state.index is None:
+            return no_update, no_update, no_update
+        duration = state.index.t_end
+        if trig == "add-view":
+            rng = view or [state.index.t_start, duration]
+            new_rows, new_mode = apply_selection_action("view", rng, rows, mode, duration)
+            return new_rows, new_mode, no_update
+        action = "keep" if trig == "sel-keep" else "exclude"
+        new_rows, new_mode = apply_selection_action(action, selection, rows, mode, duration)
+        return new_rows, new_mode, None
 
     @app.callback(Output("wave", "figure"), Output("view-info", "children"),
                   Input("view-range", "data"), Input("data-version", "data"),
                   Input("result-version", "data"), Input("ranges", "data"),
-                  Input("range-mode", "value"), Input("selected-event", "data"))
-    def _wave(view, _dv, _rv, rows, mode, selected_event):
+                  Input("range-mode", "value"), Input("selected-event", "data"),
+                  Input("mouse-mode", "value"))
+    def _wave(view, _dv, _rv, rows, mode, selected_event, mouse):
         with state.lock:
             t0, t1 = (view or [None, None])
             ranges = []
@@ -511,6 +673,15 @@ def create_app(folder: Optional[str] = None, path: Optional[str] = None):
             exclude = ranges if mode == "exclude" else []
             keep = ranges[0] if (mode == "keep" and ranges) else None
             fig, info = main_view(state, t0, t1, exclude, keep, selected_event)
+        # A new revision (view, mouse mode, ranges) resets plotly's UI state,
+        # which also removes the selection box once a range has been applied.
+        # The selection itself is deliberately not an input: redrawing would
+        # clear it while the user is choosing what to do with it.
+        fig.update_layout(
+            dragmode="select" if mouse == "select" else "zoom",
+            selectdirection="h",
+            uirevision=f"{state.result_version}-{t0}-{t1}-{mouse}-{mode}-{ranges}",
+        )
         text = ""
         if info:
             text = f"{info['raw_samples']:,} samples in view → {info['points']:,} points drawn"
@@ -526,10 +697,10 @@ def create_app(folder: Optional[str] = None, path: Optional[str] = None):
                   State("bl-window", "value"), State("detrend", "value"), State("min-dur", "value"),
                   State("merge-gap", "value"), State("thr-method", "value"), State("sub-method", "value"),
                   State("hmm", "value"), State("extras", "value"), State("jobs", "value"),
-                  State("control-path", "value"), State("range-mode", "value"), State("ranges", "data"),
+                  State("range-mode", "value"), State("ranges", "data"),
                   prevent_initial_call=True)
     def _run(_, direction, flags, cutoff, bl_window, detrend, min_dur, merge_gap, thr, sub,
-             hmm, extras, jobs, control_path, mode, rows):
+             hmm, extras, jobs, mode, rows):
         if state.sd is None:
             return "Load a recording first.", "status error", True
         if state.job.status == "running":
@@ -545,16 +716,10 @@ def create_app(folder: Optional[str] = None, path: Optional[str] = None):
         }
         try:
             config = service.build_config(settings, state.sd)
-            control = None
-            if control_path:
-                if control_path != state.control_path:
-                    state.control = service.load_recording(control_path)
-                    state.control_path = control_path
-                control = state.control
         except Exception as exc:
             return f"⚠️ {exc}", "status error", True
         ranges = service.normalise_ranges(ranges_from_rows(rows), state.index.t_end)
-        kwargs = dict(signal_data=state.sd, config=config, control=control,
+        kwargs = dict(signal_data=state.sd, config=config, control=state.control,
                       analyze_sublevels="sublevels" in flags, bayes_stats="bayes" in extras)
         if mode == "keep" and ranges:
             kwargs["analysis_range"] = ranges[0]
@@ -695,7 +860,8 @@ def _stats_text(stats: Optional[dict]) -> str:
 def run_gui(host: str = "127.0.0.1", port: int = 8050, folder: Optional[str] = None,
             path: Optional[str] = None, open_browser: bool = True, debug: bool = False) -> None:
     """Start the GUI server (blocking)."""
-    app = create_app(folder=folder, path=path)
+    local = host in ("127.0.0.1", "localhost", "::1")
+    app = create_app(folder=folder, path=path, local=local)
     url = f"http://{host}:{port}/"
     if open_browser:
         import webbrowser

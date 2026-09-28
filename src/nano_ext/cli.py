@@ -130,7 +130,7 @@ def main(verbose):
     "--gmm-max-components",
     type=int,
     default=10,
-    help="Maximum number of GMM components for threshold determination.",
+    help="Maximum number of mixture components for the threshold model (upper bound for dpgmm, largest k for gmm).",
 )
 @click.option(
     "--bic-criterion",
@@ -214,7 +214,8 @@ def main(verbose):
 @click.option(
     "--threshold-method",
     type=click.Choice(["gmm", "dpgmm"]),
-    default="gmm",
+    default="dpgmm",
+    show_default=True,
     help=(
         "Threshold model: 'gmm' (GMM for k=1..K, select by --bic-criterion) or "
         "'dpgmm' (Dirichlet-process GMM; number of components inferred)."
@@ -223,7 +224,8 @@ def main(verbose):
 @click.option(
     "--sublevel-method",
     type=click.Choice(["gmm", "dpgmm", "bocpd"]),
-    default="gmm",
+    default="dpgmm",
+    show_default=True,
     help=(
         "Sub-level method: 'gmm' (GMM + BIC), 'dpgmm' (Dirichlet-process GMM) "
         "or 'bocpd' (Bayesian online change-point detection)."
