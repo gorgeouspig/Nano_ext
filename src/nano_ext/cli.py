@@ -12,6 +12,7 @@ from nano_ext.outputs.visualize import plot_pipeline_result
 logger = logging.getLogger(__name__)
 
 @click.group()
+@click.version_option(package_name="nano_ext", prog_name="nano-ext")
 @click.option(
     "--verbose",
     "-v",
@@ -548,6 +549,27 @@ def spectrum(
         fig.savefig(plot_path, dpi=150)
         plt.close(fig)
         click.echo(f"PSD plot saved to {plot_path}")
+
+
+@main.command()
+@click.argument("filepath", required=False, type=click.Path(dir_okay=False))
+@click.option("--folder", type=click.Path(file_okay=False), default=None,
+              help="Folder to start browsing in (default: the file's folder or the current one).")
+@click.option("--host", default="127.0.0.1", show_default=True,
+              help="Interface to listen on. Keep 127.0.0.1 unless you trust the network.")
+@click.option("--port", default=8050, show_default=True, type=int, help="Port to listen on.")
+@click.option("--no-browser", is_flag=True, help="Do not open a browser window.")
+@click.option("--debug", is_flag=True, help="Run Dash in debug mode (auto-reload).")
+def gui(filepath, folder, host, port, no_browser, debug):
+    """Open the interactive GUI in your browser.
+
+    Requires:  pip install "nano-ext[gui]"
+    """
+    from nano_ext.gui import run_gui
+    if folder is None and filepath:
+        folder = str(Path(filepath).expanduser().resolve().parent)
+    run_gui(host=host, port=port, folder=folder, path=filepath,
+            open_browser=not no_browser, debug=debug)
 
 
 if __name__ == "__main__":
