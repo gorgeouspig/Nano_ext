@@ -160,9 +160,12 @@ def _detect_one_direction(
         event_mask = residual > threshold
 
     if use_gmm and open_pore_std > 0:
-        # Exclude samples within 1σ of the open-pore mean from being flagged
-        open_pore_mask = np.abs(residual - open_pore_mean) < open_pore_std
-        event_mask = event_mask & ~open_pore_mask
+        # Exclude samples within 1σ of the open-pore mean from being flagged.
+        # Only samples already past the threshold can be affected, so test
+        # just those instead of building full-length float temporaries.
+        idx = np.flatnonzero(event_mask)
+        near_open_pore = np.abs(residual[idx] - open_pore_mean) < open_pore_std
+        event_mask[idx[near_open_pore]] = False
 
     raw_intervals = _find_runs(event_mask)
     if not raw_intervals:

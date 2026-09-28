@@ -273,6 +273,7 @@ def analyze_events_sublevels(
     min_segment_samples: int = 50,
     method: str = "gmm",
     dp_concentration: Optional[float] = None,
+    n_jobs: int = 1,
 ) -> list[Event]:
     """Analyze all events for sub-level structure.
 
@@ -302,6 +303,11 @@ def analyze_events_sublevels(
         ``"gmm"``, ``"dpgmm"`` or ``"bocpd"`` (see :func:`analyze_sublevels`).
     dp_concentration : float, optional
         Dirichlet-process concentration for ``method="dpgmm"``.
+    n_jobs : int
+        Worker processes (events are independent; results are identical
+        to the sequential run).  ``1`` runs in-process; ``-1`` uses every
+        CPU.  Scripts using ``n_jobs != 1`` on Windows/macOS need an
+        ``if __name__ == "__main__":`` guard, as for any process pool.
 
     Returns
     -------
@@ -309,6 +315,18 @@ def analyze_events_sublevels(
         Same list of events with sub-level information added where the
         chosen method finds more than one level.
     """
+    kwargs = dict(
+        sampling_rate=sampling_rate,
+        filter_cutoff=filter_cutoff,
+        max_levels=max_levels,
+        min_segment_samples=min_segment_samples,
+        method=method,
+        dp_concentration=dp_concentration,
+    )
+    workers = _resolve_jobs(n_jobs)
+    if workers > 1 and len(events) >= 2 * workers:
+        return _analyze_parallel(events, signal, baseline, workers, kwargs)
+
     return [
         analyze_sublevels(
             event=ev,
@@ -323,6 +341,66 @@ def analyze_events_sublevels(
         )
         for ev in events
     ]
+
+
+# ---------------------------------------------------------------------------
+# Process-parallel execution
+# ---------------------------------------------------------------------------
+
+def _resolve_jobs(n_jobs: int) -> int:
+    import os
+    if n_jobs is None or n_jobs == 0:
+        return 1
+    if n_jobs < 0:
+        return max(1, (os.cpu_count() or 1) + 1 + n_jobs)
+    return int(n_jobs)
+
+
+def _limit_worker_threads() -> None:
+    # One BLAS thread per worker: the pool already uses every core, and
+    # nested BLAS threads would oversubscribe them.
+    try:
+        from threadpoolctl import threadpool_limits
+        threadpool_limits(1)
+    except Exception:
+        pass
+
+
+def _sublevel_task(args) -> Event:
+    """Analyse one event on its own slice of the signal (worker side)."""
+    event, sig_slice, bl_slice, offset, kwargs = args
+    sr = kwargs["sampling_rate"]
+    event.start_idx -= offset
+    event.end_idx -= offset
+    out = analyze_sublevels(event=event, signal=sig_slice, baseline=bl_slice, **kwargs)
+    out.start_idx += offset
+    out.end_idx += offset
+    for sl in out.sublevels:
+        sl.start_idx += offset
+        sl.end_idx += offset
+        sl.start_time = sl.start_idx / sr
+        sl.end_time = sl.end_idx / sr
+    return out
+
+
+def _analyze_parallel(events, signal, baseline, workers, kwargs) -> list[Event]:
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor
+
+    # Ship only each event's samples, not the whole trace.
+    tasks = [
+        (ev, np.ascontiguousarray(signal[ev.start_idx:ev.end_idx]),
+         np.ascontiguousarray(baseline[ev.start_idx:ev.end_idx]), ev.start_idx, kwargs)
+        for ev in events
+    ]
+    chunk = max(1, len(tasks) // (workers * 8))
+    # "spawn" everywhere: forking a process that already runs native thread
+    # pools (rayon, BLAS) is unsafe, and spawned workers do not inherit the
+    # parent's multi-GB address space.
+    ctx = multiprocessing.get_context("spawn")
+    with ProcessPoolExecutor(max_workers=workers, mp_context=ctx,
+                             initializer=_limit_worker_threads) as ex:
+        return list(ex.map(_sublevel_task, tasks, chunksize=chunk))
 
 
 # ---------------------------------------------------------------------------

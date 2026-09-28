@@ -88,12 +88,13 @@ def determine_threshold(
     rng = np.random.default_rng(seed)
 
     # Subsample for efficiency if needed
-    data = residual.copy()
     if method == "dpgmm":
         max_samples_for_fit = min(max_samples_for_fit, _DPGMM_MAX_SAMPLES)
-    if len(data) > max_samples_for_fit:
-        indices = rng.choice(len(data), max_samples_for_fit, replace=False)
-        data = data[indices]
+    if len(residual) > max_samples_for_fit:
+        indices = rng.choice(len(residual), max_samples_for_fit, replace=False)
+        data = np.asarray(residual[indices], dtype=np.float64)
+    else:
+        data = np.array(residual, dtype=np.float64)
 
     if method == "dpgmm":
         return _determine_threshold_dpgmm(data, max_components, dp_concentration, seed)

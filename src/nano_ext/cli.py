@@ -259,6 +259,14 @@ def main(verbose):
     ),
 )
 @click.option(
+    "--jobs",
+    "-j",
+    type=int,
+    default=-1,
+    show_default=True,
+    help="Worker processes for per-event analysis (-1 = all CPUs, 1 = no parallelism).",
+)
+@click.option(
     "--plot",
     is_flag=True,
     help="Generate and save a plot of the analysis result.",
@@ -299,6 +307,7 @@ def analyze(
     cluster_events,
     max_clusters,
     bayes_stats,
+    jobs,
     plot,
 ):
     """Analyze a nanopore data file to detect events."""
@@ -362,6 +371,7 @@ def analyze(
     config.dp_concentration = dp_concentration
     config.cluster_events = cluster_events
     config.max_clusters = max_clusters
+    config.n_jobs = jobs
 
     if analysis_range is not None and exclude_ranges:
         raise click.UsageError("--analysis-range and --exclude-range cannot be combined.")
