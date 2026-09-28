@@ -25,7 +25,10 @@ A Python-based toolkit (with Rust extensions) for extracting ionic current block
 - **Flexible Input**: Supports Axon Binary Format (ABF) and raw binary data.
 - **Interactive Jupyter UI**: `notebooks/interactive_analysis.ipynb` provides a widget-based GUI for interactive parameter exploration and result inspection — no terminal required during analysis.
 - **Per-Event Waveform Viewer**: Browse individual events with zoomed two-panel figures (signal + residual + sublevel boundaries). Export any event's waveform as `.npz` or `.csv` for downstream ML workflows.
-- **HMM Multi-state Analysis**: Gaussian HMM fitting per event with BIC-based state-count selection. Reports state means, transition matrix, and dwell-time distributions. Enable with `--hmm` (requires `pip install "nano_ext[hmm]"`).
+- **HMM Multi-state Analysis**: Gaussian HMM fitting per event with BIC-based state-count selection. Reports state means, transition matrix, and dwell-time distributions. Enable with `--hmm` (requires `pip install "nano_ext[hmm]"`), or use `--hmm-method sticky_hdp` for a sticky HDP-HMM that infers the number of states (no extra dependency).
+- **Bayesian Nonparametric Options**: Dirichlet-process GMMs (`--threshold-method dpgmm`, `--sublevel-method dpgmm`) infer the number of current levels in a single fit instead of scanning k by BIC; Bayesian online change-point detection (`--sublevel-method bocpd`) segments events with a hazard-rate prior instead of a penalty.
+- **Event Population Clustering**: `--cluster` groups events into populations (relative depth × log dwell time) with a Dirichlet-process GMM — the number of populations is inferred, and each event gets a membership probability.
+- **Bayesian Event Statistics**: `--bayes-stats` reports the capture rate with a credible interval and fits a mixture of exponentials to dwell times, giving the posterior number of time constants and their credible intervals (per population with `--cluster`).
 - **Power Spectral Density**: Welch-method PSD for noise diagnostics and effective filter-cutoff estimation. Compare sample vs. control with `nano-ext spectrum` or the Diagnostics panel in the Jupyter UI.
 - **Comprehensive Output**: Per-event CSV summaries, per-sub-level CSV (joinable via `event_id`), and interactive plotly visualisations.
 
@@ -119,10 +122,18 @@ nano-ext analyze recording.abf -o ./results \
     --min-event-duration-sec 0.0001 \
     --gmm-max-components 10 --bic-criterion bic \
     --plot
+
+# Bayesian / nonparametric variants
+nano-ext analyze recording.abf -o ./results --auto-tune \
+    --threshold-method dpgmm --sublevel-method bocpd \
+    --hmm --hmm-method sticky_hdp \
+    --cluster --bayes-stats
 ```
 
 Output files written to `--output-dir`:
-- `<stem>_events.csv` — one row per detected event
+- `<stem>_events.csv` — one row per detected event (plus `cluster_id`, `cluster_prob` with `--cluster`)
+- `<stem>_clusters.csv` — one row per event population (with `--cluster`)
+- `<stem>_bayes_stats.json` — capture-rate and dwell-time posteriors (with `--bayes-stats`)
 - `<stem>_analysis.png` — overview plot (with `--plot`)
 
 ```bash
@@ -184,6 +195,22 @@ write_events_to_csv(result.events, "events.csv", sr)
 write_sublevels_to_csv(result.events, "sublevels.csv", sr)   # multi-level events only
 ```
 
+#### Event populations and Bayesian statistics
+
+```python
+from nano_ext.analysis import cluster_events, summarize_event_statistics, dwell_time_mixture
+
+clusters = cluster_events(result.events)          # sets ev.cluster_id / ev.cluster_prob
+print(clusters.n_clusters)
+print(clusters.summary_table())
+
+stats = summarize_event_statistics(result.events, observation_time=result.signal_data.duration_sec)
+print(stats["all"]["capture_rate"])               # mean, lower, upper (events / s)
+
+dw = dwell_time_mixture([ev.duration for ev in result.events])
+print(dw.n_components, dw.tau_mean, dw.n_components_probs)
+```
+
 ## Algorithm Overview
 
 ### 1. Preprocessing
@@ -196,6 +223,7 @@ write_sublevels_to_csv(result.events, "sublevels.csv", sr)   # multi-level event
 - Select optimal k via BIC (or AIC)
 - Identify the baseline component (closest to zero in residual space)
 - Compute the threshold as the Gaussian crossing point between the baseline component and the nearest event component
+- `threshold_method="dpgmm"`: a single truncated Dirichlet-process GMM fit (variational) replaces the k-scan; unused components are pruned, and adjacent components whose two-component mixture is unimodal are merged, so the baseline is one component even when the noise is slightly non-Gaussian
 
 ### 3. Event Detection
 - Binary mask on threshold crossings → run-length encoding → gap merging
@@ -204,8 +232,20 @@ write_sublevels_to_csv(result.events, "sublevels.csv", sr)   # multi-level event
 
 ### 4. Sub-level Analysis (Optional)
 - Filter transients at event edges are trimmed (≈ 2 / filter_cutoff seconds per side) to prevent the filter's finite rise time from being misidentified as a current step
-- Rust PELT (Pruned Exact Linear Time) change-point detection segments each event; BIC selects the number of levels
+- `sublevel_method="gmm"` (default): GMM + BIC selects the number of levels; samples are assigned to levels and run-length encoded into segments
+- `sublevel_method="dpgmm"`: Dirichlet-process GMM fitted on samples thinned to about one per filter correlation time (`sampling_rate / (2 · cutoff)`), so autocorrelated samples are not counted as independent evidence
+- `sublevel_method="bocpd"`: Bayesian online change-point detection (Adams & MacKay, 2007) with a Normal-Inverse-Gamma level model on the thinned samples; segments whose means differ by less than 4 standard errors are grouped into the same level
+- Segments shorter than `min_segment_samples` are absorbed into their nearest neighbour
 - Per-sub-level depth and relative depth from baseline are stored and exportable via `write_sublevels_to_csv`
+
+### 5. HMM Analysis (Optional)
+- `hmm_method="bic"`: hmmlearn Gaussian HMMs for k = 1 … K states, selected by BIC
+- `hmm_method="sticky_hdp"`: sticky HDP-HMM (Fox et al., 2011) with a weak-limit Gibbs sampler; the self-transition bias suppresses spurious fast switching, and the posterior over the number of occupied states is reported in `HMMResult.n_states_posterior`
+
+### 6. Event Populations and Statistics (Optional)
+- `cluster_events`: Dirichlet-process GMM on z-scored per-event features (default: relative depth, log10 dwell time)
+- `capture_rate_posterior`: Gamma posterior of the Poisson capture rate (Jeffreys prior)
+- `dwell_time_mixture`: Gibbs-sampled mixture of exponentials with a sparse Dirichlet prior on the weights (superfluous components empty out); dwell times are shifted by the shortest detectable duration
 
 ## Visualization
 

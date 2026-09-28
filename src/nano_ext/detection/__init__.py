@@ -21,6 +21,18 @@ def __getattr__(name: str):
         from nano_ext.detection.sublevel import analyze_sublevels
 
         return analyze_sublevels
+    elif name == "bocpd":
+        from nano_ext.detection.bocpd import bocpd
+
+        return bocpd
+    elif name == "fit_dpgmm_1d":
+        from nano_ext.detection.bayes_mixture import fit_dpgmm_1d
+
+        return fit_dpgmm_1d
+    elif name == "fit_sticky_hdp_hmm":
+        from nano_ext.detection.hdphmm import fit_sticky_hdp_hmm
+
+        return fit_sticky_hdp_hmm
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -29,4 +41,7 @@ __all__ = [
     "detect_events",
     "binary_segmentation_bic",
     "analyze_sublevels",
+    "bocpd",
+    "fit_dpgmm_1d",
+    "fit_sticky_hdp_hmm",
 ]
