@@ -55,3 +55,6 @@ data/
 *.dat
 *.bin
 !tests/fixtures/
+
+# Demo video working files (scripts/demo_video)
+scripts/demo_video/_work/
