@@ -44,10 +44,13 @@ def test_methods_without_levels_report_nan():
     assert np.isnan(m["level_acc"]) and m["f1"] == 1.0
 
 
-def test_robust_baseline_ignores_sparse_events():
+def test_robust_baseline_ignores_events_and_follows_drift():
     rng = np.random.default_rng(0)
-    x = 100.0 + np.linspace(0, 5, 200_000) + rng.normal(0, 1, 200_000)
-    for a in range(1_000, 200_000, 20_000):
+    n, sr = 2_000_000, 100_000.0  # 20 s
+    true = 100.0 + np.linspace(0, 5, n)
+    x = true + rng.normal(0, 1, n)
+    for a in range(1_000, n, 20_000):  # 5 ms events every 200 ms
         x[a:a + 500] -= 50.0
-    base = robust_baseline(x, 100_000.0)
-    assert np.max(np.abs(base - (100.0 + np.linspace(0, 5, 200_000)))) < 0.5
+    x[500_000:540_000] -= 50.0  # one long (0.4 s) event
+    base = robust_baseline(x, sr)
+    assert np.max(np.abs(base - true)) < 0.5

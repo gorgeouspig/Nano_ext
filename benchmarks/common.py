@@ -112,20 +112,24 @@ def evaluate(truth: list[dict], detected: list[dict], iou_min: float = IOU_THRES
     }
 
 
-def robust_baseline(x: np.ndarray, sr: float, window_sec: float = 0.5, block: int = 256):
-    """Slow open-pore baseline: running median of block medians, interpolated.
+def robust_baseline(x: np.ndarray, sr: float, window_sec: float = 2.0, percentile: float = 80.0,
+                    block: int = 256):
+    """Slow open-pore baseline for the reference detectors.
 
-    Used by the simple reference detectors so that they share one baseline
-    estimate (Nano_ext uses its own). Robust while events cover < 50 % of any
-    ``window_sec`` window.
+    Medians of 256-sample blocks are smoothed with a running ``percentile``
+    over ``window_sec`` and interpolated back. A high percentile keeps the
+    estimate on the open-pore level (the highest current for downward events)
+    as long as events cover less than ``100 − percentile`` % of each window;
+    a plain running median is pulled down by long or clustered events.
+    Shared by all simple reference methods (Nano_ext uses its own baseline).
     """
-    from scipy.ndimage import median_filter
+    from scipy.ndimage import percentile_filter
 
     n = len(x)
     nb = max(1, n // block)
     med = np.median(np.asarray(x[: nb * block], dtype=np.float64).reshape(nb, block), axis=1)
-    k = max(1, int(window_sec * sr / block)) | 1
-    med = median_filter(med, size=min(k, nb if nb % 2 else nb - 1 or 1), mode="nearest")
+    k = max(1, int(window_sec * sr / block))
+    med = percentile_filter(med, percentile, size=min(k, nb), mode="nearest")
     centres = (np.arange(nb) + 0.5) * block
     return np.interp(np.arange(n), centres, med)
 

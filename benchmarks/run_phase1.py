@@ -155,10 +155,13 @@ def main():
     with ProcessPoolExecutor(max_workers=args.workers) as ex:
         for k, r in enumerate(ex.map(run_one, jobs), 1):
             rows += r
+            out.mkdir(parents=True, exist_ok=True)
+            pd.DataFrame(rows).to_csv(out / "phase1_runs.csv", index=False)  # keep partial results
             print(f"[{k}/{len(jobs)}] {r[0]['axis']}={r[0]['value']:g} seed {r[0]['seed']}: "
                   + ", ".join(f"{x['method']} F1 {x['f1']:.2f}" for x in r)
                   + f"  ({time.time() - t0:.0f}s)", flush=True)
     runs = pd.DataFrame(rows)
+    out.mkdir(parents=True, exist_ok=True)
     runs.to_csv(out / "phase1_runs.csv", index=False)
     summary = summarise(runs)
     summary.to_csv(out / "phase1_summary.csv", index=False, float_format="%.4g")
