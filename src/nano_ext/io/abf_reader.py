@@ -199,7 +199,8 @@ def get_abf_info(filepath: str | Path) -> dict:
         "n_channels": abf.channelCount,
         "n_sweeps": abf.sweepCount,
         "sampling_rate_hz": abf.dataRate,
-        "duration_sec": abf.dataLengthSec,
+        # From the data size: abf.dataLengthSec can disagree for multi-sweep ABF1 files.
+        "duration_sec": abf.dataPointCount / abf.channelCount / abf.dataRate,
         "n_samples_per_sweep": abf.sweepPointCount,
         "channel_units": abf.adcUnits,
         "channel_names": abf.adcNames,
