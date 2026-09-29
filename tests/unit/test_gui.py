@@ -248,6 +248,40 @@ class TestAppHelpers:
         assert {"Filtered", "Baseline", "Threshold", "Events"} <= set(names)
         assert info["events_visible"] >= 1
 
+    def test_noise_spectrum_before_and_after_run(self, demo_abf):
+        from dash import html
+        from nano_ext.gui import service
+        from nano_ext.gui.app import psd_info
+        sd = service.load_recording(demo_abf)
+        before = service.noise_spectrum(sd)
+        assert not before["open_pore"] and "Whole loaded trace" in before["source"]
+        assert before["psd"].f_3db_estimate is None
+        job = service.Job()
+        service.start_job(job, signal_data=sd, config=service.build_config({"n_jobs": 1}, sd)).join(120)
+        after = service.noise_spectrum(sd, result=job.result, control=sd)
+        assert after["open_pore"] and "Open-pore noise" in after["source"]
+        assert after["psd"].duration_used_sec < sd.duration_sec
+        # events carry most of the power: leaving them out lowers the RMS noise
+        assert after["summary"]["rms_total"] < before["summary"]["rms_total"]
+        assert after["filter_cutoff"] and after["control_summary"] is not None
+        assert isinstance(psd_info(after, "pA"), html.Div)
+        # with an excluded range, event indices are original-file ones: must not break
+        job2 = service.Job()
+        service.start_job(job2, signal_data=sd, config=service.build_config({"n_jobs": 1}, sd),
+                          exclude_ranges=[(0.3, 0.5)]).join(120)
+        trimmed = service.noise_spectrum(sd, result=job2.result)
+        assert "outside the analysis" in trimmed["source"]
+        assert service._outside_analysis(job2.result.signal_data, len(sd.signal)) == [(30_000, 50_000)]
+
+    def test_initial_path_is_loaded_on_start(self, demo_abf, monkeypatch):
+        from nano_ext.gui import create_app
+        monkeypatch.chdir(demo_abf.parent)
+        app = create_app(path=demo_abf.name)
+        stores = {c.id: getattr(c, "data", None) for c in app.layout.children if getattr(c, "id", None)}
+        assert stores["initial-path"] == str(demo_abf.resolve())
+        assert any("autoload" in k and "initial-path" in str(v["inputs"])
+                   for k, v in app.callback_map.items())
+
     def test_browse_entries(self, demo_abf):
         from nano_ext.gui.app import browse_entries
         folder, entries = browse_entries(str(demo_abf.parent))

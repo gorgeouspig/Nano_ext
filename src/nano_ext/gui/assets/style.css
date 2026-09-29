@@ -81,3 +81,13 @@ input[type=text], input[type=number] { border: 1px solid var(--line); border-rad
 .btn.danger:hover { filter: brightness(1.08); }
 .segmented label:has(input:checked), .segmented label:has(input:checked) * { color: #fff !important; }
 .segmented label * { color: var(--ink); }
+
+/* Noise (PSD) tab */
+.psd-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px 28px;
+            padding: 6px 4px 14px; }
+.psd-grid h4 { margin: 4px 0 6px; font-size: 13px; color: var(--ink); }
+.psd-grid ul { margin: 0; padding-left: 18px; font-size: 13px; }
+.info-table { border-collapse: collapse; font-size: 13px; width: 100%; }
+.info-table th, .info-table td { padding: 3px 8px; border-bottom: 1px solid var(--line); text-align: left; }
+.info-table th { font-weight: 600; color: var(--muted, #6c757d); }
+.info-table td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }

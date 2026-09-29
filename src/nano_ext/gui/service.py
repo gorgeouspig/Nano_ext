@@ -458,3 +458,83 @@ def residual_sample(result, n: int = 200_000, seed: int = 0) -> np.ndarray:
         return np.asarray(res, dtype=np.float64)
     idx = np.sort(np.random.default_rng(seed).choice(len(res), n, replace=False))
     return np.asarray(res[idx], dtype=np.float64)
+
+
+# ---------------------------------------------------------------------------
+# Noise spectrum
+# ---------------------------------------------------------------------------
+
+PSD_MAX_SECONDS = 60.0  # signal used per spectrum; bounds the run time on long files
+
+
+def analysis_filter_cutoff(result) -> Optional[float]:
+    """Low-pass cutoff (Hz) the analysis applied or assumed, if any."""
+    cfg = result.config
+    sr = result.signal_data.sampling_rate
+    if cfg.apply_filter:
+        return float(cfg.filter_cutoff or sr / 10.0)
+    return float(cfg.pre_applied_filter_cutoff) if cfg.pre_applied_filter_cutoff else None
+
+
+def _outside_analysis(analysed: SignalData, n_total: int) -> list[tuple[int, int]]:
+    """Original-file index intervals that an analysed (cropped) signal does not cover."""
+    n = len(analysed.signal)
+    sr = analysed.sampling_rate
+    if analysed.index_map is not None and n:
+        im = analysed.index_map
+        joins = np.flatnonzero(np.diff(im) != 1) + 1
+        starts, ends = np.r_[0, joins], np.r_[joins, n]
+        kept = [(int(im[a]), int(im[b - 1]) + 1) for a, b in zip(starts, ends)]
+    else:
+        first = int(round(analysed.time_offset * sr))
+        kept = [(first, first + n)]
+    gaps, pos = [], 0
+    for a, b in kept:
+        if a > pos:
+            gaps.append((pos, a))
+        pos = max(pos, b)
+    if pos < n_total:
+        gaps.append((pos, n_total))
+    return gaps
+
+
+def noise_spectrum(signal_data: SignalData, result=None, control: Optional[SignalData] = None,
+                   max_seconds: float = PSD_MAX_SECONDS) -> dict:
+    """Spectrum of the open-pore noise for the GUI's Noise tab.
+
+    With an analysis *result* the events (±1 ms) and excluded ranges are left
+    out, so the spectrum describes the baseline noise; otherwise the whole
+    loaded trace is used and events add low-frequency power.
+    """
+    from nano_ext.analysis.spectrum import compute_psd, noise_summary
+
+    if result is not None:
+        # Event indices are in original-file coordinates, so work on the loaded
+        # signal and also leave out whatever the analysis did not cover.
+        pad = max(10, int(1e-3 * signal_data.sampling_rate))
+        not_analysed = _outside_analysis(result.signal_data, len(signal_data.signal))
+        exclude = [(ev.start_idx - pad, ev.end_idx + pad) for ev in result.events] + not_analysed
+        psd = compute_psd(signal_data, exclude=exclude, max_duration_sec=max_seconds)
+        source = (f"Open-pore noise from the last analysis: {psd.duration_used_sec:.1f} s of "
+                  f"{signal_data.duration_sec:.1f} s used ({len(result.events)} events ±1 ms"
+                  + (" and ranges outside the analysis" if not_analysed else "")
+                  + " left out).")
+        cutoff = analysis_filter_cutoff(result)
+    else:
+        psd = compute_psd(signal_data, max_duration_sec=max_seconds)
+        psd.f_3db_estimate = None  # event power masks the roll-off; not meaningful here
+        source = (f"Whole loaded trace ({psd.duration_used_sec:.1f} s of {signal_data.duration_sec:.1f} s), "
+                  "events included — run the analysis to see the open-pore noise only.")
+        cutoff = None
+    control_psd = None
+    if control is not None:
+        control_psd = compute_psd(control, segment_sec=psd.segment_sec or 1.0, max_duration_sec=max_seconds)
+    return {
+        "psd": psd,
+        "control_psd": control_psd,
+        "summary": noise_summary(psd),
+        "control_summary": noise_summary(control_psd) if control_psd is not None else None,
+        "source": source,
+        "open_pore": result is not None,
+        "filter_cutoff": cutoff,
+    }

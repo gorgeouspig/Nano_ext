@@ -46,7 +46,7 @@ nano-ext gui            # opens the analysis app in your browser
 - **Selectable Methods**: `--threshold-method {dpgmm,gmm}` and `--sublevel-method {dpgmm,gmm,bocpd}` (default `dpgmm`; `gmm` reproduces results from ≤ 1.1). Bayesian online change-point detection (`bocpd`) is experimental — it over-segments traces with strong 1/f noise.
 - **Event Population Clustering**: `--cluster` groups events into populations (relative depth × log dwell time) with a Dirichlet-process GMM — the number of populations is inferred, and each event gets a membership probability.
 - **Bayesian Event Statistics**: `--bayes-stats` reports the capture rate with a credible interval and fits a mixture of exponentials to dwell times, giving the posterior number of time constants and their credible intervals (per population with `--cluster`).
-- **Power Spectral Density**: Welch-method PSD for noise diagnostics and effective filter-cutoff estimation. Compare sample vs. control with `nano-ext spectrum` or the Diagnostics panel in the Jupyter UI.
+- **Power Spectral Density**: Welch-method PSD for noise diagnostics and effective filter-cutoff estimation — optionally of the open-pore noise only (events and excluded ranges left out), with integrated RMS noise per band and mains-hum / pickup peak detection. Compare sample vs. control with `nano-ext spectrum`, the GUI's *Noise (PSD)* tab or the Diagnostics panel in the Jupyter UI.
 - **Comprehensive Output**: Per-event CSV summaries, per-sub-level CSV (joinable via `event_id`), and interactive plotly visualisations.
 
 ## Installation
@@ -89,7 +89,7 @@ The app opens at `http://127.0.0.1:8050/`. Work top to bottom in the left panel:
 1. **Recording** — press **Browse…** to pick a file with your system's file dialog (or paste a path, or use *Browse folders in this page*); the recording loads as soon as you choose it. Pick the channel for multi-channel ABF files; raw binary files ask for the sampling rate and data type. Optionally choose a **negative control** (analyte-free recording): its noise replaces the sample's noise estimate and it is overlaid in the noise spectrum.
 2. **Analysis range** — switch the mouse above the trace from **🔍 Zoom** to **↔ Select range**, drag across a region, then press **Analyze only this** or **Exclude this** (e.g. zap artifacts). Ranges are shaded on the trace (green = analysed, red = excluded) and listed in an editable table; *Use current view* takes the zoomed window instead.
 3. **Settings** — event direction, auto-tune, filter/baseline overrides, and the methods for threshold, sub-levels, HMM, population clustering and Bayesian statistics.
-4. **Run analysis** — runs in the background (progress below the button). Results appear on the trace (filtered signal, baseline, threshold, event markers) and in the tabs: *Summary* (residual histogram with the fitted mixture), *Events* (sortable table + per-event zoom), *Scatter* (dwell time vs. relative depth by population), *Dwell & statistics*, *Noise (PSD)* and *Export*.
+4. **Run analysis** — runs in the background (progress below the button). Results appear on the trace (filtered signal, baseline, threshold, event markers) and in the tabs: *Summary* (residual histogram with the fitted mixture), *Events* (sortable table + per-event zoom), *Scatter* (dwell time vs. relative depth by population), *Dwell & statistics*, *Noise (PSD)* (open-pore noise spectrum with RMS noise per band and hum peaks; computed when you open the tab) and *Export*.
 
 The **Browse…** buttons use Python's Tk file dialog (included with the python.org and conda builds; on Debian/Ubuntu `sudo apt install python3-tk`). Without Tk, or when the server runs on another machine, the in-page folder list is used instead.
 
@@ -278,8 +278,10 @@ make_event_grid(result, n_cols=3, max_events=9).show()   # side-by-side grid
 # Export event waveform for downstream ML
 dump_event_waveform(result, event_index=0, path="event_0.npz")
 
-# Power spectral density
-psd = compute_psd(result.signal_data)
+# Power spectral density of the open-pore noise (events left out)
+from nano_ext.analysis.spectrum import noise_summary
+psd = compute_psd(signal_data, exclude=[(e.start_idx, e.end_idx) for e in result.events])
+print(noise_summary(psd)["rms_below"])   # RMS noise below 1 / 10 / 100 kHz
 make_psd_figure(psd).show()
 ```
 
