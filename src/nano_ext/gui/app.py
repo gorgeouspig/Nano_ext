@@ -37,6 +37,7 @@ class GuiState:
         self.control_path: Optional[str] = None
         self.job = service.Job()
         self.result_version = 0
+        self.autoload_done = 0    # last "autoload" request that was served
 
     @property
     def result(self):
@@ -394,8 +395,15 @@ def build_layout(state: GuiState, path: Optional[str] = None):
             html.Pre(id="stats-text", className="summary"),
         ]),
         dcc.Tab(label="Noise (PSD)", value="psd", children=[
-            html.Button("Compute power spectrum", id="psd-btn", className="btn"),
-            dcc.Loading(dcc.Graph(id="psd", config={"displaylogo": False}, style={"height": "400px"})),
+            html.Div([
+                html.Div(id="psd-source", className="hint grow-text"),
+                html.Button("Recompute", id="psd-btn", className="btn ghost small"),
+            ], className="row between"),
+            dcc.Loading([
+                dcc.Graph(id="psd", config={"displaylogo": False}, style={"height": "420px"},
+                          figure=figures.empty_figure("The noise spectrum appears here once a recording is loaded")),
+                html.Div(id="psd-info", className="psd-info"),
+            ]),
         ]),
         dcc.Tab(label="Export", value="export", children=[
             html.Div([
@@ -440,6 +448,7 @@ def build_layout(state: GuiState, path: Optional[str] = None):
         dcc.Store(id="result-version", data=0),
         dcc.Store(id="selected-event", data=None),
         dcc.Store(id="autoload", data=0),
+        dcc.Store(id="initial-path", data=path),  # `nano-ext gui FILE`: load it on start
         dcc.Store(id="browser-entries", data=[]),
         dcc.Interval(id="poll", interval=500, disabled=True),
     ]
@@ -464,7 +473,7 @@ def create_app(folder: Optional[str] = None, path: Optional[str] = None, local: 
         __name__, title="Nano_ext", update_title=None,
         assets_folder=str(Path(__file__).parent / "assets"),
     )
-    app.layout = build_layout(state, str(Path(path).expanduser()) if path else None)
+    app.layout = build_layout(state, str(Path(path).expanduser().resolve()) if path else None)
     app._nano_state = state  # for tests / debugging
 
     # --- Choosing files -----------------------------------------------------
@@ -500,6 +509,14 @@ def create_app(folder: Optional[str] = None, path: Optional[str] = None, local: 
         if entry["kind"] == "dir":
             return entry["path"], no_update, no_update
         return no_update, entry["path"], (autoload or 0) + 1
+
+    @app.callback(Output("autoload", "data", allow_duplicate=True),
+                  Input("initial-path", "data"), State("autoload", "data"),
+                  prevent_initial_call="initial_duplicate")
+    def _initial_load(path, autoload):
+        if not path or state.sd is not None:
+            return no_update
+        return (autoload or 0) + 1
 
     @app.callback(Output("path", "value", allow_duplicate=True),
                   Output("autoload", "data", allow_duplicate=True),
@@ -548,13 +565,17 @@ def create_app(folder: Optional[str] = None, path: Optional[str] = None, local: 
                   State("path", "value"), State("bin-sr", "value"),
                   State("bin-dtype", "value"), State("bin-scale", "value"),
                   State("data-version", "data"), prevent_initial_call=True)
-    def _load(_, _auto, channel, path, sr, dtype, scale, version):
+    def _load(_, auto, channel, path, sr, dtype, scale, version):
         trig = ctx.triggered_id
-        if trig == "channel":
+        # A file pick fires "autoload" and, via the file info, "channel" almost
+        # together; Dash keeps only the later response, so whichever call comes
+        # last must perform a pending load.
+        pending = (auto or 0) > state.autoload_done and path != state.path
+        if trig == "channel" and not pending:
             # Re-load only when switching channel of the recording on screen.
             if state.sd is None or path != state.path or channel == state.channel:
                 return no_update, no_update, no_update
-        if trig == "autoload" and path != state.path:
+        if trig in ("autoload", "channel") and pending:
             channel = 0  # a new file: its channel list is not populated yet
         if not path:
             return "Choose a file first.", no_update, no_update
@@ -570,6 +591,7 @@ def create_app(folder: Optional[str] = None, path: Optional[str] = None, local: 
             return f"⚠️ {exc}", no_update, no_update
         with state.lock:
             state.sd, state.path, state.channel = sd, path, channel or 0
+            state.autoload_done = max(state.autoload_done, auto or 0)
             state.index = TraceIndex(sd)
             state.job = service.Job()
             state.result_version += 1
@@ -803,16 +825,27 @@ def create_app(folder: Optional[str] = None, path: Optional[str] = None, local: 
             return figures.empty_figure("Select an event in the table, the trace or the scatter plot")
         return figures.event_figure(result, index)
 
-    @app.callback(Output("psd", "figure"), Input("psd-btn", "n_clicks"), prevent_initial_call=True)
-    def _psd(_):
+    psd_cache: dict = {}
+
+    @app.callback(Output("psd", "figure"), Output("psd-info", "children"), Output("psd-source", "children"),
+                  Input("tabs", "value"), Input("psd-btn", "n_clicks"),
+                  Input("data-version", "data"), Input("result-version", "data"),
+                  prevent_initial_call=True)
+    def _psd(tab, _clicks, _dv, _rv):
+        if tab != "psd":
+            return no_update, no_update, no_update
         if state.sd is None:
-            return figures.empty_figure("Load a recording first")
-        from nano_ext.analysis.spectrum import compute_psd, make_psd_figure
-        control_psd = compute_psd(state.control) if state.control is not None else None
-        psd = compute_psd(state.sd)
-        fig = make_psd_figure(psd, control_psd=control_psd) if control_psd is not None else make_psd_figure(psd)
-        fig.update_layout(template="plotly_white")
-        return fig
+            return figures.empty_figure("Load a recording first"), None, ""
+        result = state.result
+        key = (id(state.sd), id(result), state.control_path)
+        if ctx.triggered_id == "psd-btn" or psd_cache.get("key") != key:
+            spec = service.noise_spectrum(state.sd, result=result, control=state.control)
+            psd_cache.update(key=key, spec=spec)
+        spec = psd_cache["spec"]
+        from nano_ext.analysis.spectrum import make_psd_figure
+        fig = make_psd_figure(spec["psd"], control_psd=spec["control_psd"],
+                              filter_cutoff=spec["filter_cutoff"], peaks=spec["summary"]["peaks"])
+        return fig, psd_info(spec, state.sd.units or "pA"), spec["source"]
 
     @app.callback(Output("download", "data"),
                   Input("dl-events", "n_clicks"), Input("dl-sublevels", "n_clicks"),
@@ -835,6 +868,57 @@ def create_app(folder: Optional[str] = None, path: Optional[str] = None, local: 
         return no_update if text is None else dict(content=text, filename=f"{stem}_bayes_stats.json")
 
     return app
+
+
+def _si(f: float) -> str:
+    return f"{f / 1e3:.3g} kHz" if f >= 1e3 else f"{f:.3g} Hz"
+
+
+def psd_info(spec: dict, unit: str = "pA"):
+    """Noise-tab tables: RMS noise, per-decade levels, spectral peaks."""
+    from dash import html
+
+    summ, psd = spec["summary"], spec["psd"]
+    ctrl = spec.get("control_summary")
+
+    def row(label, value, cvalue=None, hint=None):
+        cells = [html.Td(label, title=hint or ""), html.Td(value, className="num")]
+        if ctrl is not None:
+            cells.append(html.Td(cvalue if cvalue is not None else "", className="num"))
+        return html.Tr(cells)
+
+    head = [html.Th(""), html.Th("Sample")] + ([html.Th("Control")] if ctrl is not None else [])
+    rms = [row(f"RMS noise, full band (0–{_si(psd.frequencies[-1])})", f"{summ['rms_total']:.3g} {unit}",
+               f"{ctrl['rms_total']:.3g} {unit}" if ctrl else None,
+               "Square root of the PSD integrated over all frequencies = standard deviation")]
+    cdict = dict(ctrl["rms_below"]) if ctrl else {}
+    for f, v in summ["rms_below"]:
+        rms.append(row(f"RMS noise below {_si(f)}", f"{v:.3g} {unit}",
+                       f"{cdict[f]:.3g} {unit}" if f in cdict else None,
+                       "What an ideal low-pass filter at this frequency would leave"))
+    cutoff = psd.f_3db_estimate
+    rms.append(row("Roll-off (−3 dB) estimate",
+                   _si(cutoff) if cutoff else ("none below Nyquist" if spec.get("open_pore")
+                                               else "after the analysis"),
+                   hint="Where the spectrum drops to half its low-frequency level"))
+    if spec.get("filter_cutoff"):
+        rms.append(row("Analysis low-pass cutoff", _si(spec["filter_cutoff"])))
+    rms.append(row("Frequency resolution", f"{summ['resolution_hz']:.3g} Hz · {psd.n_segments} segments"))
+
+    band_rows = [html.Tr([html.Th("Band"), html.Th(f"Median PSD ({psd.units})"), html.Th(f"RMS ({unit})")])]
+    for lo, hi, med, brms in summ["bands"]:
+        band_rows.append(html.Tr([html.Td(f"{_si(lo)} – {_si(hi)}"), html.Td(f"{med:.3g}", className="num"),
+                                  html.Td(f"{brms:.3g}", className="num")]))
+
+    peaks = summ["peaks"]
+    peak_items = ([html.Li(f"{p['frequency']:.4g} Hz — {p['ratio']:.0f}× the local level"
+                           + (f" ({p['label']})" if p["label"] else "")) for p in peaks]
+                  or [html.Li("No narrow lines (mains hum, pickup) stand out.")])
+    return html.Div([
+        html.Div([html.H4("Noise level"), html.Table([html.Tr(head)] + rms, className="info-table")]),
+        html.Div([html.H4("Per decade"), html.Table(band_rows, className="info-table")]),
+        html.Div([html.H4("Narrow peaks"), html.Ul(peak_items)]),
+    ], className="psd-grid")
 
 
 def _stats_text(stats: Optional[dict]) -> str:

@@ -164,9 +164,11 @@ def main() -> int:
             page.wait_for_timeout(1500)
             print(page.inner_text("#stats-text"))
             page.screenshot(path=str(out / "05_stats.png"), full_page=True)
-            tab("Noise")
-            page.click("#psd-btn")
-            page.wait_for_selector("#psd .main-svg", timeout=60000)
+            tab("Noise")  # computed on opening: open-pore noise of the last run
+            page.wait_for_selector("#psd-source:has-text('Open-pore noise')", timeout=60000)
+            page.wait_for_selector("#psd-info table", timeout=60000)
+            print(page.inner_text("#psd-source"))
+            page.screenshot(path=str(out / "06_noise.png"), full_page=True)
             tab("Export")
             with page.expect_download() as dl:
                 page.click("#dl-events")

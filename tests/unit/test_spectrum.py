@@ -207,3 +207,77 @@ class TestMakePSDFigure:
         fig = make_psd_figure(psd)
         assert fig.layout.xaxis.type == "log"
         assert fig.layout.yaxis.type == "log"
+
+
+# ---------------------------------------------------------------------------
+# Event exclusion, subsampling and noise summary
+# ---------------------------------------------------------------------------
+
+class TestOpenPoreSpectrum:
+    def _noisy_with_events(self, sr=20_000, duration=10.0, seed=0):
+        rng = np.random.default_rng(seed)
+        x = rng.normal(0.0, 2.0, int(sr * duration))
+        events = []
+        for start in np.arange(0.2, duration - 0.2, 0.25):
+            a, b = int(start * sr), int((start + 0.01) * sr)
+            x[a:b] -= 80.0  # deep blockades add strong low-frequency power
+            events.append((a, b))
+        return SignalData(signal=x.astype(np.float32), sampling_rate=sr), events
+
+    def test_excluding_events_recovers_white_noise(self):
+        sd, events = self._noisy_with_events()
+        white = 2 * 2.0 ** 2 / sd.sampling_rate  # one-sided PSD of N(0, 2²)
+        full = compute_psd(sd, segment_sec=0.1)
+        clean = compute_psd(sd, segment_sec=0.1, exclude=[(a - 20, b + 20) for a, b in events])
+        low = lambda r: np.median(r.psd[(r.frequencies > 10) & (r.frequencies < 200)])  # noqa: E731
+        assert low(full) > 10 * white
+        assert low(clean) == pytest.approx(white, rel=0.3)
+        assert clean.duration_used_sec < full.duration_used_sec
+        assert clean.segment_sec <= 0.1
+
+    def test_segments_do_not_cross_range_joins(self):
+        from nano_ext.analysis.spectrum import _clean_runs
+        idx = np.r_[0:100, 500:600, 700:800]
+        runs = _clean_runs(300, [(150, 160)], idx)
+        assert runs == [(0, 100), (100, 150), (160, 200), (200, 300)]
+
+    def test_max_duration_caps_used_signal(self):
+        sd = _make_signal(sr=10_000, duration=20.0)
+        res = compute_psd(sd, segment_sec=0.1, max_duration_sec=2.0)
+        assert res.duration_used_sec <= 2.5
+        assert res.duration_total_sec == pytest.approx(20.0)
+
+    def test_noise_summary_rms_matches_std(self):
+        from nano_ext.analysis.spectrum import noise_summary
+        rng = np.random.default_rng(1)
+        sd = SignalData(signal=rng.normal(0, 3.0, 200_000).astype(np.float32), sampling_rate=50_000)
+        summ = noise_summary(compute_psd(sd, segment_sec=0.1))
+        assert summ["rms_total"] == pytest.approx(3.0, rel=0.05)
+        assert [c for c, _ in summ["rms_below"]] == [1e3, 1e4]
+        assert all(lo < hi for lo, hi, _, _ in summ["bands"])
+
+    def test_mains_hum_is_found_and_labelled(self):
+        from nano_ext.analysis.spectrum import find_spectral_peaks
+        sr = 10_000
+        t = np.arange(int(sr * 10)) / sr
+        rng = np.random.default_rng(2)
+        x = rng.normal(0, 1.0, len(t)) + 1.5 * np.sin(2 * np.pi * 50 * t)
+        peaks = find_spectral_peaks(compute_psd(SignalData(signal=x, sampling_rate=sr)))
+        assert peaks and abs(peaks[0]["frequency"] - 50) <= 1
+        assert peaks[0]["label"] == "mains 50 Hz"
+
+    def test_white_noise_has_no_cutoff(self):
+        rng = np.random.default_rng(3)
+        sd = SignalData(signal=rng.normal(0, 1, 100_000), sampling_rate=10_000)
+        assert compute_psd(sd, segment_sec=0.1).f_3db_estimate is None
+
+    def test_figure_extras(self):
+        pytest.importorskip("plotly")
+        from nano_ext.analysis.spectrum import find_spectral_peaks, make_psd_figure
+        psd = compute_psd(_make_signal(sr=10_000, duration=2.0), segment_sec=0.2)
+        fig = make_psd_figure(psd, filter_cutoff=1000.0,
+                              peaks=[{"frequency": 50.0, "ratio": 20.0, "label": "mains 50 Hz"}])
+        names = [t.name for t in fig.data]
+        assert "Integrated RMS (pA)" in names and "Peaks" in names
+        assert "PSD" in fig.layout.yaxis.title.text and "Hz" in fig.layout.xaxis.title.text
+        assert find_spectral_peaks(psd) == [] or isinstance(find_spectral_peaks(psd), list)
