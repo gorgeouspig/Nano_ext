@@ -7,9 +7,13 @@ pip install "nano-ext[gui]"
 nano-ext gui            # opens the analysis app in your browser
 ```
 
-![Nano_ext GUI](https://raw.githubusercontent.com/gorgeouspig/Nano_ext/main/docs/images/gui_overview.png)
+![Zooming from a 10-minute recording down to a single two-level event](https://raw.githubusercontent.com/gorgeouspig/Nano_ext/main/docs/images/gui_demo.gif)
 
 ## Screenshots
+
+### Browser GUI — overview
+
+![Nano_ext GUI](https://raw.githubusercontent.com/gorgeouspig/Nano_ext/main/docs/images/gui_overview.png)
 
 ### Browser GUI — event populations
 
