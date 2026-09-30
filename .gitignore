@@ -62,3 +62,4 @@ scripts/demo_video/_work/
 # Benchmark suite: its README and result tables are part of the repository
 !benchmarks/README.md
 !benchmarks/results/*.csv
+benchmarks/_external/
