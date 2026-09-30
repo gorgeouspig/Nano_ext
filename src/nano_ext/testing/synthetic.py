@@ -57,13 +57,21 @@ class SyntheticSignalResult:
     baseline_trace : np.ndarray
         The true baseline (including drift) without events.
     events : list[SyntheticEventSpec]
-        Ground-truth event specifications.
+        Ground-truth event specifications (times before the low-pass filter).
+    unfiltered_clean_signal : np.ndarray, optional
+        The noise-free signal before the simulated low-pass filter (only set
+        when a filter is applied; ``clean_signal`` is then the filtered one).
+    filter_delay_sec : float
+        Low-frequency group delay of the simulated filter: events appear this
+        much later in ``signal_data`` than their ``start_time``.
     """
 
     signal_data: SignalData
     clean_signal: np.ndarray
     baseline_trace: np.ndarray
     events: list[SyntheticEventSpec]
+    unfiltered_clean_signal: Optional[np.ndarray] = None
+    filter_delay_sec: float = 0.0
 
 
 def _generate_pink_noise(n_samples: int, rng: np.random.Generator) -> np.ndarray:
@@ -158,6 +166,15 @@ def generate_synthetic_signal(
     drift_type: str = "linear",
     drift_coefficients: Optional[list[float]] = None,
     seed: Optional[int] = None,
+    filter_cutoff: Optional[float] = None,
+    filter_order: int = 4,
+    filter_noise: bool = False,
+    oversample: int = 4,
+    hum_frequency: float = 50.0,
+    hum_amplitude: float = 0.0,
+    hum_harmonics: int = 1,
+    hf_noise_std: float = 0.0,
+    hf_noise_exponent: float = 1.0,
 ) -> SyntheticSignalResult:
     """Generate a synthetic nanopore current trace with known events.
 
@@ -183,6 +200,34 @@ def generate_synthetic_signal(
         Polynomial coefficients for drift (used when drift_type="polynomial").
     seed : int, optional
         Random seed for reproducibility.
+    filter_cutoff : float, optional
+        −3 dB cutoff (Hz) of a simulated analog Bessel low-pass filter, as in
+        the amplifier. The noise-free signal is built on a grid ``oversample``
+        times finer than ``sampling_rate``, filtered causally and then
+        sampled, so steps get the finite rise time (and group delay) of real
+        recordings. ``None`` (default) keeps ideal steps.
+    filter_order : int
+        Number of poles of the Bessel filter (4 and 8 are common).
+    filter_noise : bool
+        Also pass the white, pink and high-frequency noise through the filter
+        (their ``*_std`` then refer to the noise before filtering). By default
+        the noise is added after the filter, so the ``*_std`` values are the
+        noise levels in the output.
+    oversample : int
+        Oversampling factor used to simulate the analog filter.
+    hum_frequency, hum_amplitude, hum_harmonics : float, float, int
+        Mains pickup: ``hum_harmonics`` sinusoids at k × ``hum_frequency``
+        with amplitude ``hum_amplitude / k`` (pA) and random phases. Off by
+        default.
+    hf_noise_std : float
+        RMS (pA) of an extra noise component whose PSD rises as
+        f^``hf_noise_exponent`` (1: dielectric, 2: capacitive / input
+        voltage noise). Off by default.
+    hf_noise_exponent : float
+        Spectral slope of that component.
+
+    New options draw their random numbers after the existing ones, so a
+    given ``seed`` reproduces earlier signals exactly when they are off.
 
     Returns
     -------
@@ -230,10 +275,31 @@ def generate_synthetic_signal(
             clean_signal[start_idx:end_idx] = level_current + drift[start_idx:end_idx]
             current_time += level_duration
 
+    # --- Simulated analog low-pass filter (amplifier) ---
+    unfiltered = None
+    delay = 0.0
+    sos = None
+    if filter_cutoff is not None:
+        unfiltered = clean_signal
+        clean_signal, sos, delay = _analog_bessel_clean(
+            events, drift, baseline_current, n_samples, sampling_rate,
+            filter_cutoff, filter_order, max(1, int(oversample)),
+        )
+
     # --- Add noise ---
     white_noise = white_noise_std * rng.standard_normal(n_samples)
     pink_noise = pink_noise_std * _generate_pink_noise(n_samples, rng)
-    noisy_signal = clean_signal + white_noise + pink_noise
+    noise = white_noise + pink_noise
+    if hf_noise_std > 0:
+        noise = noise + hf_noise_std * _generate_power_law_noise(n_samples, hf_noise_exponent, rng)
+    if filter_noise and filter_cutoff is not None:
+        noise = _filter_at_rate(noise, sampling_rate, filter_cutoff, filter_order)
+    if hum_amplitude > 0:
+        t = np.arange(n_samples) / sampling_rate
+        for k in range(1, max(1, int(hum_harmonics)) + 1):
+            phase = rng.uniform(0, 2 * np.pi)
+            noise = noise + (hum_amplitude / k) * np.sin(2 * np.pi * k * hum_frequency * t + phase)
+    noisy_signal = clean_signal + noise
 
     signal_data = SignalData(
         signal=noisy_signal,
@@ -245,6 +311,12 @@ def generate_synthetic_signal(
             "white_noise_std": white_noise_std,
             "pink_noise_std": pink_noise_std,
             "n_events": len(events),
+            **({"filter_cutoff": filter_cutoff, "filter_order": filter_order,
+                "filter_delay_sec": delay} if filter_cutoff is not None else {}),
+            **({"hum_frequency": hum_frequency, "hum_amplitude": hum_amplitude,
+                "hum_harmonics": hum_harmonics} if hum_amplitude > 0 else {}),
+            **({"hf_noise_std": hf_noise_std, "hf_noise_exponent": hf_noise_exponent}
+               if hf_noise_std > 0 else {}),
         },
     )
 
@@ -253,7 +325,204 @@ def generate_synthetic_signal(
         clean_signal=clean_signal,
         baseline_trace=baseline_trace,
         events=events,
+        unfiltered_clean_signal=unfiltered,
+        filter_delay_sec=delay,
     )
+
+
+def _bessel_sos(cutoff: float, order: int, fs: float):
+    from scipy.signal import bessel
+
+    if not 0 < cutoff < fs / 2:
+        raise ValueError(f"filter_cutoff must be between 0 and {fs / 2:g} Hz (Nyquist of the simulation grid)")
+    return bessel(order, cutoff, btype="low", norm="mag", fs=fs, output="sos")
+
+
+def _dc_group_delay(sos, fs: float) -> float:
+    from scipy.signal import group_delay, sos2tf
+
+    b, a = sos2tf(sos)
+    _, gd = group_delay((b, a), w=[1e-6], fs=fs)
+    return float(gd[0]) / fs
+
+
+def _analog_bessel_clean(events, drift, baseline_current, n_samples, sampling_rate,
+                         cutoff, order, oversample):
+    """Noise-free trace through a Bessel low-pass, simulated on a finer grid."""
+    from scipy.signal import sosfilt, sosfilt_zi
+
+    fs_hi = sampling_rate * oversample
+    n_hi = n_samples * oversample
+    # drift is smooth: linear interpolation onto the fine grid is exact enough
+    t_lo = np.arange(n_samples)
+    t_hi = np.arange(n_hi) / oversample
+    hi = baseline_current + np.interp(t_hi, t_lo, drift)
+    drift_hi = hi - baseline_current
+    for event in events:
+        current_time = event.start_time
+        for level_duration, level_current in event.levels:
+            a = max(0, min(int(round(current_time * fs_hi)), n_hi))
+            b = max(0, min(int(round((current_time + level_duration) * fs_hi)), n_hi))
+            hi[a:b] = level_current + drift_hi[a:b]
+            current_time += level_duration
+    sos = _bessel_sos(cutoff, order, fs_hi)
+    y, _ = sosfilt(sos, hi, zi=sosfilt_zi(sos) * hi[0])
+    return y[::oversample].copy(), sos, _dc_group_delay(sos, fs_hi)
+
+
+def _filter_at_rate(x: np.ndarray, fs: float, cutoff: float, order: int) -> np.ndarray:
+    from scipy.signal import sosfilt, sosfilt_zi
+
+    sos = _bessel_sos(cutoff, order, fs)
+    y, _ = sosfilt(sos, x, zi=sosfilt_zi(sos) * x[0])
+    return y
+
+
+def _generate_power_law_noise(n_samples: int, exponent: float, rng: np.random.Generator) -> np.ndarray:
+    """Unit-variance Gaussian noise with PSD ∝ f^exponent (DC removed)."""
+    white = rng.standard_normal(n_samples)
+    spec = np.fft.rfft(white)
+    f = np.fft.rfftfreq(n_samples)
+    shape = np.zeros_like(f)
+    shape[1:] = f[1:] ** (exponent / 2.0)
+    x = np.fft.irfft(spec * shape, n=n_samples)
+    std = x.std()
+    return x / std if std > 0 else x
+
+
+def truth_table(result: SyntheticSignalResult) -> list[dict]:
+    """Ground truth per event, in the time frame of ``result.signal_data``.
+
+    Returns one dict per event with ``start``/``end`` (s, shifted by the
+    filter group delay), ``dwell`` (s), ``n_levels``, ``depth`` (duration-
+    weighted mean blockade relative to the local baseline, pA),
+    ``level_bounds`` (s, boundaries between sub-levels) and
+    ``level_currents`` (pA).
+    """
+    sd = result.signal_data
+    delay = result.filter_delay_sec
+    rows = []
+    for ev in result.events:
+        t, bounds, currents, weighted = ev.start_time, [], [], 0.0
+        i = min(max(int(ev.start_time * sd.sampling_rate), 0), len(result.baseline_trace) - 1)
+        base = float(result.baseline_trace[i])
+        for k, (dur, cur) in enumerate(ev.levels):
+            if k:
+                bounds.append(t + delay)
+            currents.append(float(cur))
+            weighted += dur * (base - cur)
+            t += dur
+        rows.append({
+            "start": ev.start_time + delay,
+            "end": ev.end_time + delay,
+            "dwell": ev.duration,
+            "n_levels": ev.n_levels,
+            "depth": weighted / ev.duration if ev.duration > 0 else 0.0,
+            "baseline": base,
+            "level_bounds": bounds,
+            "level_currents": currents,
+        })
+    return rows
+
+
+def poisson_event_train(
+    duration_sec: float,
+    rate_hz: float,
+    make_levels,
+    rng: np.random.Generator,
+    min_gap_sec: float = 0.0,
+    margin_sec: float = 0.02,
+) -> list[SyntheticEventSpec]:
+    """Events arriving as a Poisson process.
+
+    Parameters
+    ----------
+    duration_sec : float
+        Length of the recording.
+    rate_hz : float
+        Mean arrival rate (events per second of open pore).
+    make_levels : callable
+        ``make_levels(rng) -> list[(duration_sec, current)]`` for one event,
+        e.g. from :func:`level_sampler`.
+    rng : numpy.random.Generator
+    min_gap_sec : float
+        Minimum open-pore time after each event (events never overlap).
+    margin_sec : float
+        Keep this much open pore at both ends of the recording.
+    """
+    events, t = [], margin_sec
+    while True:
+        t += rng.exponential(1.0 / rate_hz)
+        levels = make_levels(rng)
+        dur = sum(d for d, _ in levels)
+        if t + dur > duration_sec - margin_sec:
+            return events
+        events.append(SyntheticEventSpec(t, levels))
+        t += dur + min_gap_sec
+
+
+def level_sampler(
+    baseline_current: float,
+    depth,
+    dwell_mean_sec: float,
+    dwell: str = "exponential",
+    dwell_sigma: float = 0.5,
+    dwell_min_sec: float = 0.0,
+    n_levels=1,
+    level_depths=None,
+):
+    """Build a ``make_levels`` callable for :func:`poisson_event_train`.
+
+    Parameters
+    ----------
+    baseline_current : float
+        Open-pore current (pA).
+    depth : float or (low, high)
+        Blockade depth (pA) of single-level events, fixed or uniform in a range.
+    dwell_mean_sec : float
+        Mean total event duration.
+    dwell : {"exponential", "lognormal", "fixed"}
+        Dwell-time distribution (lognormal uses ``dwell_sigma`` in log space
+        with the given mean).
+    dwell_min_sec : float
+        Added to every dwell time (shortest possible event).
+    n_levels : int or sequence of int
+        Number of sub-levels, fixed or drawn uniformly from the sequence.
+    level_depths : sequence of float, optional
+        Depths (pA) of the sub-levels in order; the i-th level of an event
+        uses ``level_depths[i % len]``. Defaults to ``depth`` for level 0 and
+        alternately ±30 % of it for the following ones.
+    """
+
+    def draw_depth(rng):
+        if isinstance(depth, (tuple, list)):
+            return float(rng.uniform(depth[0], depth[1]))
+        return float(depth)
+
+    def draw_dwell(rng):
+        if dwell == "exponential":
+            d = rng.exponential(dwell_mean_sec)
+        elif dwell == "lognormal":
+            mu = np.log(dwell_mean_sec) - dwell_sigma ** 2 / 2
+            d = rng.lognormal(mu, dwell_sigma)
+        elif dwell == "fixed":
+            d = dwell_mean_sec
+        else:
+            raise ValueError(f"unknown dwell distribution {dwell!r}")
+        return float(d) + dwell_min_sec
+
+    def make(rng):
+        k = int(rng.choice(n_levels)) if isinstance(n_levels, (list, tuple)) else int(n_levels)
+        total = draw_dwell(rng)
+        d0 = draw_depth(rng)
+        if level_depths is not None:
+            depths = [level_depths[i % len(level_depths)] for i in range(k)]
+        else:
+            depths = [d0 * (1.0 if i == 0 else (0.7 if i % 2 else 1.3)) for i in range(k)]
+        parts = rng.dirichlet(np.full(k, 5.0)) * total if k > 1 else np.array([total])
+        return [(float(p), baseline_current - float(dd)) for p, dd in zip(parts, depths)]
+
+    return make
 
 
 def _generate_default_events(
