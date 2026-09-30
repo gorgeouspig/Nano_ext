@@ -1,0 +1,5 @@
+method,samples,runtime_s,peak_rss_mb,peak_rss_increase_mb
+nano_ext[dpgmm],1000000,5.731,219.5,25.4
+nano_ext[gmm],1000000,14.542,261.7,66.6
+threshold,1000000,0.086,208.9,45.8
+pelt,1000000,10.789,228.0,64.2
