@@ -28,7 +28,7 @@ import json
 import os
 import sys
 import time
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "RAYON_NUM_THREADS"):
@@ -168,7 +168,9 @@ def test_job(args):
 def _parallel(jobs, fn, workers, out_csv: Path, previous: list):
     rows, t0 = list(previous), time.time()
     with ProcessPoolExecutor(max_workers=workers) as ex:
-        for k, r in enumerate(ex.map(fn, jobs), 1):
+        futures = [ex.submit(fn, j) for j in jobs]
+        for k, fut in enumerate(as_completed(futures), 1):  # save each job as soon as it ends
+            r = fut.result()
             rows += r
             pd.DataFrame(rows).to_csv(out_csv, index=False)
             if r:
