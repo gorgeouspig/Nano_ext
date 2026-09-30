@@ -148,14 +148,32 @@ def configs_to_test(sel: pd.DataFrame, name: str, axis: str, value: float) -> di
     return out
 
 
+MAX_RUN_SEC = 1800.0  # settings expected to take longer per test recording are not run
+
+
+def estimated_runtime(tuning: pd.DataFrame, name: str, axis: str, value: float, params) -> float:
+    """Test-recording run time predicted from tuning (scaled by recording length)."""
+    if params is None:
+        return 0.0
+    cid = GRIDS[name].index(params)
+    t = tuning[(tuning.method == name) & (tuning.axis == axis) & np.isclose(tuning.value, value)
+               & (tuning.config == cid)].runtime_s.mean()
+    sc = next(s for s in phase1_scenarios() if s.axis == axis and np.isclose(s.value, value))
+    return float(t) * sc.duration_sec / min(sc.duration_sec, TUNING_MAX_SEC)
+
+
 def test_job(args):
-    sc, seed, name, settings, skip_default = args
+    sc, seed, name, settings, skip_default, estimates = args
     signal, sr, truth, meta = make_recording(sc, seed)
     done, rows = {}, []
     for label, params in settings.items():
         if label == "default" and skip_default:
             continue
         key = json.dumps(params, sort_keys=True)
+        if key not in done and estimates.get(key, 0.0) > MAX_RUN_SEC:
+            done[key] = {**evaluate(truth, []), "f1": np.nan, "recall": np.nan, "precision": np.nan,
+                         "f1_any": np.nan, "runtime_s": np.nan,
+                         "error": f"skipped: estimated {estimates[key]:.0f} s per recording"}
         if key not in done:
             done[key] = _run(name, params or {}, signal, sr, truth)
         rows.append({"axis": sc.axis, "value": sc.value, "seed": seed, "method": name, "setting": label,
@@ -271,14 +289,18 @@ def main():
             has_phase1 = m in set(phase1.method)
             for sc in scenarios:
                 settings = configs_to_test(sel, m, sc.axis, sc.value)
+                estimates = {json.dumps(p, sort_keys=True): estimated_runtime(tuning, m, sc.axis, sc.value, p)
+                             for p in settings.values()}
                 for s in TEST_SEEDS:
                     if (sc.axis, sc.value, s, m) not in done:
-                        jobs.append((sc, s, m, settings, has_phase1))
+                        jobs.append((sc, s, m, settings, has_phase1, estimates))
         if not prev:
             prev = reuse.to_dict("records")
         print(f"test: {len(jobs)} jobs")
         _parallel(jobs, test_job, args.workers, csv, prev)
 
+    if not (out / "phase2_test.csv").exists():
+        return
     test = pd.read_csv(out / "phase2_test.csv")
     metrics = ["f1", "f1_any", "recall", "precision", "dwell_err", "depth_err", "level_acc", "bound_err_us",
                "runtime_s"]
