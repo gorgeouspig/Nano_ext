@@ -244,6 +244,10 @@ def plot(summary: pd.DataFrame, sens: pd.DataFrame, out_png: Path):
             ax.fill_between(dm.value, dm.f1_min, dm.f1_max, color=colors[m], alpha=0.12)
             ax.plot(dm.value, dm.f1_median, color=colors[m], lw=1)
         ax.set_xscale("log")
+        if axis == "snr":
+            ticks = sorted(d.value.unique())
+            ax.set_xticks(ticks, [f"{t:g}" for t in ticks])
+            ax.minorticks_off()
         ax.set_ylim(-0.03, 1.03)
         ax.set_title("Tuning F1 over the 12 settings (median, range)", fontsize=9.5)
         ax.set_xlabel(xlabel)
