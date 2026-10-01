@@ -33,6 +33,7 @@ python benchmarks/run_realdata.py --workers 2 # agreement between methods on pub
 | `run_phase3.py` | event rate, filter cutoff, drift, hum and sub-level count axes, writes `results/phase3_*` |
 | `run_realdata.py` | methods on public recordings without ground truth, writes `results/realdata_*` |
 | `external/` | `setup.sh` (pinned installs of the external tools into `_external/`, untracked) and the worker scripts that run MOSAIC and Nano Trees in their own environments |
+| `short_event_limit.py` | shortest detectable event behind a 10 kHz filter vs Nano_ext's minimum event duration, writes `results/short_event_limit*.csv` |
 | `sublevel_count_repro.py` | reproduces the sub-level figure quoted in the main README |
 | `results/` | phase 1: `phase1_runs.csv` (every run), `phase1_summary.csv` (mean and SD over seeds), `phase1_resources.csv`, `phase1.png`; phase 2: `phase2_tuning.csv`, `phase2_selected.csv`, `phase2_sensitivity.csv`, `phase2_test.csv`, `phase2_summary.csv`, `phase2.png` |
 
@@ -335,6 +336,40 @@ Observations:
 
 - PELT does not fit 75 M samples in memory or time here, so it runs on independent 10 s chunks, and events cut by a chunk boundary are dropped. The tuned PELT run took 33 min.
 - Poriscope's sample data (DOI 10.20383/103.01599) could not be downloaded in the environment used for these runs. `run_realdata.py` picks it up from `_external/data/poriscope/` when it is placed there.
+
+## Short events behind a 10 kHz filter
+
+`short_event_limit.py` asks how short an event Nano_ext can detect when the amplifier filter is 10 kHz.
+
+**Setup.**
+
+- Recordings are 10 s at 250 kHz, behind a 4-pole 10 kHz Bessel filter.
+- Noise is white, 1/f and f² (capacitive), filtered together with the signal.
+- Events are single-level, 100 pA deep, with a nearly fixed duration (lognormal, σ 0.1), at 10 per second.
+- Nano_ext runs with the filter declared as already applied (`apply_filter=False`, `pre_applied_filter_cutoff=10e3`). Only `min_event_duration_sec = k / fc` is varied; the default is k = 5.
+- Two seeds per condition.
+
+**Filter alone (noise-free).** The 10–90 % rise time is about 33 µs. A rectangular blockade reaches its full depth only if it lasts at least about 60 µs (about 2 rise times). Shorter blockades are attenuated: 95 % of the depth at 50 µs, 72 % at 30 µs, 53 % at 20 µs (`short_event_limit_attenuation.csv`).
+
+**Recall (any overlap) vs event duration (µs).**
+
+| SNR | k (min duration) | 20 | 30 | 50 | 70 | 100 | 150 | 200 | 300 | 500 | 1000 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 10 | 0.5 (50 µs) | 0.00 | 0.01 | 0.65 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
+| 10 | 1 (100 µs) | 0 | 0 | 0 | 0 | 0.55 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
+| 10 | 5 (500 µs, default) | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0.51 | 1.00 |
+| 20 | 0.5 | 0.06 | 0.77 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
+| 40 | 0.5 | 0.98 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
+| 5 | 0.5 | 0 | 0 | 0 | 0.10 | 0.37 | 0.63 | 0.69 | 0.85 | 0.85 | 0.98 |
+
+**Observations.**
+
+- At SNR ≥ 10, the minimum event duration, not the noise, sets the detection limit. Events shorter than the minimum duration are lost, and so are about half of those whose length equals it.
+- With the default k = 5, nothing shorter than about 500 µs is detected at 10 kHz.
+- Lowering the minimum to 50 µs (k = 0.5) moves the limit to about 50–70 µs at SNR 10, about 30–50 µs at SNR 20 and about 20 µs at SNR 40. On these Gaussian-noise recordings it adds no false events at SNR ≥ 10.
+- At SNR 5 even 1 ms events are partly missed. There the 5σ open-pore threshold is the limit, not the minimum duration.
+- Depth is the mean over the detected event, so short events read shallower: 0.90 of the true depth at 100 µs and 0.82 at 50 µs (SNR 10, k = 0.5). This is because the rising and falling edges are included.
+- Real recordings have non-Gaussian noise (spikes, bursts), so the false-event rate on them can be higher than here.
 
 ## Limitations and next steps
 
