@@ -1,0 +1,7 @@
+axis,value,seed,method,n_true,n_detected,tp,recall,precision,f1,f1_any,dwell_err,depth_err,level_acc,bound_err_us,runtime_s,error
+snr,2,0,nano_ext[dpgmm],177,0,0,0.0,0.0,0.0,0.0,,,,,7.809580820999599,
+snr,2,0,nano_ext[dpgmm]-no_dp_prior,177,0,0,0.0,0.0,0.0,0.0,,,,,7.654309429000023,
+snr,2,0,nano_ext[dpgmm]-no_thinning,177,0,0,0.0,0.0,0.0,0.0,,,,,4.952492433000316,
+snr,2,0,nano_ext[dpgmm]-no_merge,177,0,0,0.0,0.0,0.0,0.0,,,,,5.8981184029998985,
+snr,2,1,nano_ext[dpgmm],186,0,0,0.0,0.0,0.0,0.0,,,,,6.029181243000039,
+snr,2,1,nano_ext[dpgmm]-no_dp_prior,186,0,0,0.0,0.0,0.0,0.0,,,,,6.183482912999807,
