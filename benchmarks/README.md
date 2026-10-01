@@ -450,6 +450,20 @@ The spread of the tuning F1 over the 12 settings is 0.30, against 0.62 for nano_
 - **Low SNR:** at SNR ≤ 3 it finds no usable event cluster or calls noise excursions events (F1 ≤ 0.14 even when tuned per scenario). At SNR 5 the defaults over-call (precision 0.12); the tuned posterior of 0.99 fixes this (0.93).
 - **Runtime:** about 6 s per 10–30 s recording, dominated by the rolling median. For 100 ms events (30 s recordings, 5 s window) it is 47–70 s.
 
+**Phase-3 axes (same protocol as the other methods; F1, default / tuned global setting).**
+
+| axis | values | F1 |
+|---|---|---|
+| event rate | 1, 3, 10, 50, 200 /s | 0.44, 0.51, 0.61, 0.70, 0.77 / 1.00, 0.99, 0.98, 0.96, 0.81 |
+| low-pass | 10, 30, 100 kHz | 0.72, 0.70, 0.64 / 0.97, 0.96, 0.96 |
+| drift | none, linear, quadratic | 0.70, 0.70, 0.67 / 0.96, 0.97, 0.95 |
+| hum | 0, 3, 10 pA | 0.70, 0.64, 0.44 / 0.96, 0.96, 0.90 |
+| sub-levels | 1, 2, 3, 4 | 0.99, 0.38, 0.48, 0.27 / 0.97, 0.95, 0.95, 0.95 |
+
+- **Defaults over-call.** Recall stays at 0.87–1.00 throughout, but precision is 0.16–0.62 except with one level per event. Events are split where the current crosses back over the threshold inside the event (sub-levels, hum). In sparse recordings the event cluster also picks up noise.
+- **The tuned setting is robust on these axes.** That setting is a 5 s window, posterior 0.99 and a 1 ms merge gap. It reaches 0.90 with 10 pA hum and 0.95 with quadratic drift, against 0.77 and 0.84 for nano_ext[dpgmm]. It is weakest at 200 events/s (0.81, recall 0.75), where events cover about 20 % of the time.
+
+
 ## Limitations and next steps
 
 - **Not covered:** upward events; combinations of axes; per-scenario tuning on the phase-3 axes.
