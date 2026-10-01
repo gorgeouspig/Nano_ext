@@ -71,12 +71,16 @@ def _white_gain(cutoff: float, order: int, fs: float) -> float:
     return float(np.sqrt(np.mean(np.abs(h) ** 2)))
 
 
-def make_recording(sc: Scenario, seed: int):
-    """(signal float32, sampling rate, truth table, generator metadata)."""
+def make_recording(sc: Scenario, seed: int, max_duration_sec: float | None = None):
+    """(signal float32, sampling rate, truth table, generator metadata).
+
+    ``max_duration_sec`` shortens the recording (used for parameter tuning).
+    """
     rng = np.random.default_rng(seed)
+    duration = sc.duration_sec if max_duration_sec is None else min(sc.duration_sec, max_duration_sec)
     make = level_sampler(BASELINE, DEPTH, sc.dwell_mean_sec, dwell="lognormal", dwell_sigma=0.5,
                          n_levels=[1, 2], level_depths=[DEPTH, 0.6 * DEPTH])
-    events = poisson_event_train(sc.duration_sec, sc.rate_hz, make, rng,
+    events = poisson_event_train(duration, sc.rate_hz, make, rng,
                                  min_gap_sec=max(20e-6, 0.2 * sc.dwell_mean_sec))
     sigma = DEPTH / sc.snr
     sigma_pink = PINK_FRACTION * sigma
@@ -85,14 +89,14 @@ def make_recording(sc: Scenario, seed: int):
     # the filter is sigma_white_out (1/f noise is essentially unaffected)
     gain = _white_gain(FILTER_CUTOFF, FILTER_ORDER, SR)
     res = generate_synthetic_signal(
-        duration_sec=sc.duration_sec, sampling_rate=SR, baseline_current=BASELINE,
+        duration_sec=duration, sampling_rate=SR, baseline_current=BASELINE,
         white_noise_std=sigma_white_out / gain, pink_noise_std=sigma_pink,
         events=events, drift_rate=sc.drift_rate, seed=seed + 1000,
         filter_cutoff=FILTER_CUTOFF, filter_order=FILTER_ORDER, filter_noise=True,
         hum_amplitude=sc.hum_amplitude,
     )
     noise = res.signal_data.signal - res.clean_signal
-    meta = {**asdict(sc), "seed": seed, "duration_sec": sc.duration_sec, "rate_hz": sc.rate_hz,
+    meta = {**asdict(sc), "seed": seed, "duration_sec": duration, "rate_hz": sc.rate_hz,
             "noise_rms": float(noise.std()), "n_events": len(events),
             "filter_delay_us": res.filter_delay_sec * 1e6}
     return res.signal_data.signal.astype(np.float32), SR, truth_table(res), meta
