@@ -4,8 +4,10 @@ Datasets (never committed; fetched or unpacked into ``_external/data/``):
 
 * ``autonanopore_demo`` – the 300 s, 250 kHz ABF shipped with AutoNanopore
   (``1.abf.zip`` in its repository, see ``external/setup.sh``).
-* ``poriscope_sample`` – Poriscope's sample data (DOI 10.20383/103.01599);
-  downloaded by hand into ``_external/data/poriscope/`` if available.
+* ``poriscope_sample`` – Poriscope's sample data (DOI 10.20383/103.01599,
+  CC BY 4.0), fetched into ``_external/data/poriscope/`` by
+  ``external/fetch_poriscope_data.py`` (checksums in
+  ``external/poriscope_data.sha256``).
 
 Every method runs with its default setting and with the single setting tuned
 for detection in phase 2. The trace is converted to pA and its sign chosen so

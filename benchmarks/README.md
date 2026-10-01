@@ -32,7 +32,7 @@ python benchmarks/run_realdata.py --workers 2 # agreement between methods on pub
 | `run_phase2.py` | external tools and equal-budget tuning, writes `results/phase2_*` |
 | `run_phase3.py` | event rate, filter cutoff, drift, hum and sub-level count axes, writes `results/phase3_*` |
 | `run_realdata.py` | methods on public recordings without ground truth, writes `results/realdata_*` |
-| `external/` | `setup.sh` (pinned installs of the external tools into `_external/`, untracked) and the worker scripts that run MOSAIC and Nano Trees in their own environments |
+| `external/` | `setup.sh` (pinned installs of the external tools into `_external/`, untracked) and the worker scripts that run MOSAIC and Nano Trees in their own environments; `fetch_poriscope_data.py` (download and SHA256 check of the Poriscope sample data) |
 | `short_event_limit.py` | shortest detectable event behind a 10 kHz filter vs Nano_ext's minimum event duration, writes `results/short_event_limit*.csv` |
 | `sublevel_count_repro.py` | reproduces the sub-level figure quoted in the main README |
 | `results/` | phase 1: `phase1_runs.csv` (every run), `phase1_summary.csv` (mean and SD over seeds), `phase1_resources.csv`, `phase1.png`; phase 2: `phase2_tuning.csv`, `phase2_selected.csv`, `phase2_sensitivity.csv`, `phase2_test.csv`, `phase2_summary.csv`, `phase2.png` |
@@ -158,7 +158,7 @@ That recording is favourable: every level lasts ≥ 1 ms, the blockades are deep
 | `threshold+nanotrees` | Events from `threshold` (default k = 5); sub-levels fitted inside each event (± padding) by the NanoTrees event fitter of Poriscope (commit `9d2b9e8`, MIT). | Python ≥ 3.12.10 environment. The plugin is called as in Poriscope's own unit tests, without its GUI and event loader. Its default *Smallest Significant Sublevel* (600 pA) is far above the 36–60 pA blockades here, so by default it reports one level per event. |
 | `autonanopore` | AutoNanopore (commit `a44cb80`), unmodified; `event_detection` is called on an ABF copy of the recording. | The repository has no licence file, so it is fetched, not copied. Its command-line entry point never calls the detection. It keeps the largest excursion of each 30 ms window and accepts windows whose amplitude is an outlier among all windows, so it assumes most windows hold no event. With ~1.5 events per window here it finds no outliers and fails; this is counted as zero detections. On a sparse check recording (2 events/s) it reaches F1 0.64 with defaults. |
 
-CBED (cluster-based event detection, 2026 preprint) is not included: no public code was found.
+CBED (cluster-based event detection, 2026 preprint) is not included yet. The preprint states that its machine-learning workflow is on GitHub, but the repository could not be identified from the environment used here (the preprint's full text was not reachable). Once located, the plan is to check whether that code runs event detection on its own and, if so, add it as a method on the synthetic recordings.
 
 ### Tuning protocol
 
@@ -335,7 +335,7 @@ Observations:
 **Caveats.**
 
 - PELT does not fit 75 M samples in memory or time here, so it runs on independent 10 s chunks, and events cut by a chunk boundary are dropped. The tuned PELT run took 33 min.
-- Poriscope's sample data (DOI 10.20383/103.01599) could not be downloaded in the environment used for these runs. `run_realdata.py` picks it up from `_external/data/poriscope/` when it is placed there.
+- Poriscope's sample data (DOI 10.20383/103.01599, FRDR, CC BY 4.0) is not yet included. `external/fetch_poriscope_data.py` downloads it into `_external/data/poriscope/` (never committed) and checks the files against `external/poriscope_data.sha256`; `run_realdata.py` then picks it up.
 
 ## Short events behind a 10 kHz filter
 
