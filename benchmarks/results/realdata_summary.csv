@@ -1,0 +1,15 @@
+dataset,method,setting,runtime_s,error,n_events,median_dwell_ms,median_depth_pa,duration_s
+autonanopore_demo,autonanopore,default,38.96,,80,0.108,107.4,300
+autonanopore_demo,autonanopore,tuned_global_f1,78.85,,2053,0.124,52.68,300
+autonanopore_demo,mosaic,default,501.7,,120,0.072,23.36,300
+autonanopore_demo,mosaic,tuned_global_f1,195.1,,5,0.064,64.69,300
+autonanopore_demo,nano_ext[dpgmm],default,27.82,,13,0.316,113,300
+autonanopore_demo,nano_ext[dpgmm],tuned_global_f1,28.18,,104,0.06,95.35,300
+autonanopore_demo,nano_ext[gmm],default,38.84,,430,0.308,73.98,300
+autonanopore_demo,nano_ext[gmm],tuned_global_f1,42.28,,1236,0.236,66.38,300
+autonanopore_demo,pelt,default,674.8,,2598,0.156,60.79,300
+autonanopore_demo,pelt,tuned_global_f1,1966,,1898,2.594,42.24,300
+autonanopore_demo,threshold,default,18.96,,596,5.568,51.15,300
+autonanopore_demo,threshold,tuned_global_f1,14.86,,469,10,48.42,300
+autonanopore_demo,threshold+nanotrees,default,79.45,,596,5.568,51.15,300
+autonanopore_demo,threshold+nanotrees,tuned_global_f1,75.84,,596,5.568,51.26,300
