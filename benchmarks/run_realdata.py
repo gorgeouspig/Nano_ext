@@ -20,6 +20,11 @@ that the open pore is positive and blockades point down. Outputs:
   method and setting (PELT runs in 10 s chunks here)
 * ``results/realdata_agreement.csv`` – pairwise agreement: F1 of one method's
   events against another's (IoU ≥ 0.5 and any overlap; symmetric)
+* ``results/realdata_reference.csv`` – Poriscope sample only: recall of each
+  method against the 15 visually reviewed events that the dataset's
+  ``tutorial_events.sqlite3`` lists for 0–50 s (detected with a 2000 pA
+  threshold, so shallower events are not in it and precision is not
+  defined), and the number of events each method reports in that window
 
 Event lists stay in ``_external/data/events/`` (derived from third-party data).
 
@@ -50,7 +55,7 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from adapters import METHODS  # noqa: E402
-from common import evaluate  # noqa: E402
+from common import evaluate, match_events  # noqa: E402
 from run_phase2 import GRIDS, _clean  # noqa: E402
 
 DATA = HERE / "_external" / "data"
@@ -162,6 +167,50 @@ def agreement(dataset: str, keys: list[tuple[str, str]]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+REF_WINDOW = (0.0, 50.0)  # s; the reviewed events cover channel 3 over this window
+
+
+def poriscope_reference() -> list[dict] | None:
+    """Reviewed events of ``tutorial_events.sqlite3`` (channel 3), in s.
+
+    Each row stores ``absolute_start`` (5 MHz sample index of the stored
+    window), the padding before/after the event and the raw window; the
+    raw-data channels 1, 3 and 4 hold identical data.
+    """
+    import sqlite3
+
+    db = DATA / "poriscope" / "tutorial_events.sqlite3"
+    if not db.exists():
+        return None
+    con = sqlite3.connect(db)
+    (sr,) = con.execute("SELECT samplerate FROM channels WHERE channel_id = 3").fetchone()
+    out = []
+    for st, pb, pa, nbytes in con.execute(
+            "SELECT absolute_start, padding_before, padding_after, length(raw_data) FROM events "
+            "WHERE channel_id = 3 ORDER BY absolute_start"):
+        n = nbytes // 8 - pb - pa
+        out.append({"start": (st + pb) / sr, "end": (st + pb + n) / sr, "depth": np.nan, "n_levels": None})
+    con.close()
+    return out
+
+
+def reference_table(keys: list[tuple[str, str]]) -> pd.DataFrame | None:
+    ref = poriscope_reference()
+    if ref is None:
+        return None
+    lo, hi = REF_WINDOW
+    rows = []
+    for method, setting in keys:
+        ev = json.loads((DATA / "events" / "poriscope_sample" / f"{method}__{setting}.json").read_text())
+        ev = [e for e in ev if lo <= e["start"] < hi]
+        m = evaluate(ref, ev)
+        any_hit = {i for i, _, _ in match_events(ref, ev, 1e-12)}
+        rows.append({"method": method, "setting": setting, "n_reference": len(ref), "n_detected": len(ev),
+                     "recall_any": len(any_hit) / len(ref), "recall_iou50": m["recall"],
+                     "dwell_err": m["dwell_err"]})
+    return pd.DataFrame(rows)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--datasets", default="autonanopore_demo,poriscope_sample")
@@ -193,6 +242,11 @@ def main():
     agree = pd.concat([agreement(ds, [(r.method, r.setting) for r in g.itertuples() if not r.error])
                        for ds, g in summary.groupby("dataset")], ignore_index=True)
     agree.to_csv(out / "realdata_agreement.csv", index=False, float_format="%.3g")
+    g = summary[(summary.dataset == "poriscope_sample") & (summary.error == "")]
+    ref = reference_table([(r.method, r.setting) for r in g.itertuples()]) if len(g) else None
+    if ref is not None:
+        ref.to_csv(out / "realdata_reference.csv", index=False, float_format="%.3g")
+        print(ref.to_string(index=False))
     print(summary.to_string(index=False))
 
 
