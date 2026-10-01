@@ -274,6 +274,156 @@ def autonanopore(signal, sr, theta=1.5, window_size_ms=30):
             for _, r in table.iterrows()]
 
 
+# ---------------------------------------------------------------------------
+# Rolling-median baseline + two-component GMM threshold
+# ---------------------------------------------------------------------------
+
+def _histogram_gmm2(centers, counts, mu_b, sd_b, mu_e, sd_e, w_e, n_iter=300):
+    """EM for a two-component 1-D Gaussian mixture fitted to a histogram.
+
+    Component 0 is the baseline, component 1 the event cluster. Returns
+    ``(weights, means, sds)``.
+    """
+    w = np.array([1.0 - w_e, w_e])
+    mu = np.array([mu_b, mu_e], dtype=np.float64)
+    sd = np.array([sd_b, sd_e], dtype=np.float64)
+    c = counts / counts.sum()
+    floor = 0.5 * (centers[1] - centers[0])
+    for _ in range(n_iter):
+        pdf = w * np.exp(-0.5 * ((centers[:, None] - mu) / sd) ** 2) / sd
+        resp = pdf / np.maximum(pdf.sum(axis=1, keepdims=True), 1e-300)
+        r = resp * c[:, None]
+        nk = r.sum(axis=0)
+        if np.any(nk <= 1e-12):
+            break
+        new_mu = (r * centers[:, None]).sum(axis=0) / nk
+        new_sd = np.sqrt((r * (centers[:, None] - new_mu) ** 2).sum(axis=0) / nk)
+        new_sd = np.maximum(new_sd, floor)
+        done = np.allclose(new_mu, mu, atol=1e-6 * sd_b) and np.allclose(new_sd, sd, rtol=1e-6)
+        w, mu, sd = nk, new_mu, new_sd
+        if done:
+            break
+    return w / w.sum(), mu, sd
+
+
+def rolling_median_2gmm(signal, sr, window_sec=1.0, posterior=0.5, n_bins=512,
+                        merge_gap_sec=20e-6, min_duration_sec=0.0):
+    """Rolling-median baseline and a two-component GMM threshold.
+
+    Re-implementation based on the description of cluster-based event
+    detection in Wei et al. 2026 (bioRxiv, doi 10.64898/2026.05.07.723187);
+    not the original authors' code.
+
+    1. Baseline B(t): median of the current over a centred window of
+       ``window_sec`` (fewer samples at the ends, at least one).
+    2. Residual C(t) = I(t) − B(t).
+    3. A two-component Gaussian mixture is fitted by EM to the histogram of
+       C (``n_bins`` bins): one baseline cluster and one event cluster.
+    4. Samples whose posterior probability of the event cluster is at least
+       ``posterior`` belong to events; the threshold is the residual where
+       that probability is reached, between the two cluster means
+       (``posterior = 0.5``: the Bayes decision boundary).
+    5. Post-processing: events closer than ``merge_gap_sec`` are merged,
+       events shorter than ``min_duration_sec`` are dropped.
+
+    Assumptions where the description leaves details open: the window length,
+    the number of bins, the initialisation (baseline cluster at the median
+    of C with its MAD width; event cluster at the 1st percentile with twice
+    that width and weight 0.05) and the post-processing values. Without a
+    separate event cluster (event mean not below the baseline mean by more
+    than one baseline SD) no events are reported. No sub-level analysis.
+    """
+    import pandas as pd
+
+    x = np.asarray(signal, dtype=np.float64)
+    win = max(1, int(round(window_sec * sr)))
+    base = pd.Series(x).rolling(win, center=True, min_periods=1).median().to_numpy()
+    r = x - base
+    counts, edges = np.histogram(r, bins=n_bins)
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    med = float(np.median(r))
+    mad = max(float(1.4826 * np.median(np.abs(r - med))), 1e-9)
+    w, mu, sd = _histogram_gmm2(centers, counts.astype(np.float64), med, mad,
+                                float(np.percentile(r, 1.0)), 2.0 * mad, 0.05)
+    b, e = (0, 1) if mu[0] >= mu[1] else (1, 0)
+    if not mu[e] < mu[b] - sd[b]:
+        return []
+    grid = np.linspace(mu[e], mu[b], 2000)
+    pb = w[b] * np.exp(-0.5 * ((grid - mu[b]) / sd[b]) ** 2) / sd[b]
+    pe = w[e] * np.exp(-0.5 * ((grid - mu[e]) / sd[e]) ** 2) / sd[e]
+    post = pe / np.maximum(pb + pe, 1e-300)
+    above = np.flatnonzero(post >= posterior)
+    if len(above) == 0:
+        return []
+    thr = grid[above[-1]]  # highest residual still assigned to events
+    inside = r <= thr
+    edges_i = np.flatnonzero(np.diff(np.concatenate(([0], inside.astype(np.int8), [0]))))
+    starts, ends = list(edges_i[::2]), list(edges_i[1::2])
+    gap = int(merge_gap_sec * sr)
+    ms, me = [], []
+    for s0, e0 in zip(starts, ends):
+        if ms and s0 - me[-1] <= gap:
+            me[-1] = e0
+        else:
+            ms.append(s0)
+            me.append(e0)
+    min_len = max(1, int(min_duration_sec * sr))
+    return [{"start": s0 / sr, "end": e0 / sr, "depth": float(-r[s0:e0].mean()),
+             "n_levels": None, "level_bounds": []}
+            for s0, e0 in zip(ms, me) if e0 - s0 >= min_len]
+
+
+# ---------------------------------------------------------------------------
+# DPGMM ablations (benchmark-side switches; the package defaults are unchanged)
+# ---------------------------------------------------------------------------
+
+@contextlib.contextmanager
+def _dpgmm_ablation(ablate: str):
+    """Temporarily remove one ingredient of Nano_ext's DPGMM fits.
+
+    * ``no_dp_prior`` – finite symmetric Dirichlet weight prior instead of
+      the Dirichlet-process (stick-breaking) prior
+    * ``no_merge`` – adjacent components with a unimodal mixture are not merged
+    * ``no_thinning`` – sub-level fits use every sample instead of one per
+      filter correlation time (``thinning_step`` returns 1)
+
+    The first two affect both the event threshold and the sub-level fits; the
+    third only the sub-level fits (the threshold fit is not thinned).
+    """
+    from nano_ext.detection import bayes_mixture as bm
+
+    saved = (bm.fit_dpgmm_1d, bm.thinning_step, bm.BayesianGaussianMixture)
+    if ablate == "no_dp_prior":
+        class _FiniteDirichlet(saved[2]):
+            def __init__(self, **kw):
+                kw["weight_concentration_prior_type"] = "dirichlet_distribution"
+                super().__init__(**kw)
+        bm.BayesianGaussianMixture = _FiniteDirichlet
+    elif ablate == "no_merge":
+        def _fit(*a, **kw):
+            kw["merge_unimodal"] = False
+            return saved[0](*a, **kw)
+        bm.fit_dpgmm_1d = _fit
+    elif ablate == "no_thinning":
+        bm.thinning_step = lambda sampling_rate, filter_cutoff: 1
+    elif ablate != "none":
+        raise ValueError(f"unknown ablation {ablate!r}")
+    try:
+        yield
+    finally:
+        bm.fit_dpgmm_1d, bm.thinning_step, bm.BayesianGaussianMixture = saved
+
+
+def nano_ext_ablation(signal, sr, ablate="none", **config):
+    """``nano_ext[dpgmm]`` with one DPGMM ingredient removed (see ``_dpgmm_ablation``)."""
+    with _dpgmm_ablation(ablate):
+        return nano_ext(signal, sr, threshold_method="dpgmm", sublevel_method="dpgmm", **config)
+
+
+ABLATIONS = {f"nano_ext[dpgmm]{'' if a == 'none' else '-' + a}": (nano_ext_ablation, {"ablate": a})
+             for a in ("none", "no_dp_prior", "no_merge", "no_thinning")}
+
+
 METHODS = {
     "nano_ext[dpgmm]": (nano_ext, {"threshold_method": "dpgmm", "sublevel_method": "dpgmm"}),
     "nano_ext[gmm]": (nano_ext, {"threshold_method": "gmm", "sublevel_method": "gmm"}),
@@ -282,4 +432,5 @@ METHODS = {
     "mosaic": (mosaic, {}),
     "threshold+nanotrees": (threshold_nanotrees, {}),
     "autonanopore": (autonanopore, {}),
+    "rolling_median_2gmm": (rolling_median_2gmm, {}),
 }

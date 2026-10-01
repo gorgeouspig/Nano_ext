@@ -49,6 +49,7 @@ class Scenario:
     rate: float | None = None  # events per second; default depends on the dwell time
     filter_cutoff: float = FILTER_CUTOFF
     n_levels: tuple = (1, 2)  # sub-level counts drawn uniformly per event
+    level_depths: tuple = ()  # sub-level depths (pA) in order; () uses the default 60, 36, 48, 24
 
     @property
     def rate_hz(self) -> float:
@@ -106,7 +107,7 @@ def make_recording(sc: Scenario, seed: int, max_duration_sec: float | None = Non
     rng = np.random.default_rng(seed)
     duration = sc.duration_sec if max_duration_sec is None else min(sc.duration_sec, max_duration_sec)
     # sub-level depths: 60, 36, 48, 24 pA (adjacent levels differ by ≥ 12 pA)
-    depths = [DEPTH, 0.6 * DEPTH, 0.8 * DEPTH, 0.4 * DEPTH]
+    depths = list(sc.level_depths) or [DEPTH, 0.6 * DEPTH, 0.8 * DEPTH, 0.4 * DEPTH]
     make = level_sampler(BASELINE, DEPTH, sc.dwell_mean_sec, dwell="lognormal", dwell_sigma=0.5,
                          n_levels=list(sc.n_levels), level_depths=depths[:max(2, max(sc.n_levels))])
     events = poisson_event_train(duration, sc.rate_hz, make, rng,
