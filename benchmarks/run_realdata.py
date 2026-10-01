@@ -8,9 +8,9 @@ Datasets (never committed; fetched or unpacked into ``_external/data/``):
   CC BY 4.0), fetched into ``_external/data/poriscope/`` by
   ``external/fetch_poriscope_data.py``. Its recordings are Chimera VC400
   ``.log`` files (raw int16, scaled with the companion ``.json`` as in
-  Poriscope's ``ChimeraReader20240501``). The first ``--max-sec`` seconds of
+  Poriscope's ``ChimeraReader20240501``). The first ``MAX_SEC`` seconds of
   the first channel found are used, decimated (FIR, zero phase) to at most
-  500 kHz.
+  500 kHz and cached as ``.npy`` next to the data.
 
 Every method runs with its default setting and with the single setting tuned
 for detection in phase 2. The trace is converted to pA and its sign chosen so
@@ -72,7 +72,14 @@ def prepare(name: str) -> Path | None:
         d = DATA / "poriscope"
         files = sorted(p for p in d.glob("*.log") if p.with_suffix(".json").exists()) if d.exists() else []
         files = [p for p in files if p.stat().st_size > 10 * 2**20] or files  # skip near-empty channels
-        return files[0] if files else None
+        if not files:
+            return None
+        cache = d / f"{files[0].stem}.{MAX_SEC:g}s.npy"  # cropped, decimated, in pA
+        if not cache.exists():
+            y, sr = _load_chimera(files[0], MAX_SEC)
+            np.save(cache, y.astype(np.float32))
+            cache.with_suffix(".json").write_text(json.dumps({"source": files[0].name, "sampling_rate": sr}))
+        return cache
     raise ValueError(name)
 
 
@@ -99,7 +106,10 @@ def _load_chimera(path: Path, max_sec: float):
 
 def load_pA(path: Path, max_sec: float = MAX_SEC):
     """Signal in pA, sign flipped if needed so the open pore is positive."""
-    if path.suffix.lower() == ".log":
+    if path.suffix.lower() == ".npy":  # cache written by prepare()
+        y = np.load(path).astype(np.float64)
+        sr = float(json.loads(path.with_suffix(".json").read_text())["sampling_rate"])
+    elif path.suffix.lower() == ".log":
         y, sr = _load_chimera(path, max_sec)
     else:
         import pyabf

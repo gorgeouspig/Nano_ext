@@ -137,16 +137,23 @@ def read_manifest() -> dict[str, str]:
 
 
 def frdr_checksums() -> dict[str, str]:
-    """{file name: hex digest} from FRDR's checksum file, if downloaded."""
+    """{file name: SHA256} from FRDR's checksum file, if downloaded.
+
+    The file pairs ``Filename/Fichier: <name>`` with a following
+    ``SHA256 Checksum/...: <hex>`` line.
+    """
     p = DEST / "frdr-dfdr-checksums.txt"
-    out = {}
+    out, name = {}, None
     if p.exists():
         for line in p.read_text(errors="replace").splitlines():
-            m = re.search(r"\b([0-9a-fA-F]{32}|[0-9a-fA-F]{40}|[0-9a-fA-F]{64})\b", line)
+            m = re.match(r"\s*Filename[^:]*:\s*(.+?)\s*$", line)
             if m:
-                name = Path(line.replace(m.group(1), "").strip(" \t*,:;|")).name
-                if name:
-                    out[name] = m.group(1).lower()
+                name = m.group(1)
+                continue
+            m = re.search(r"\b([0-9a-fA-F]{64})\b", line)
+            if m and name:
+                out[name] = m.group(1).lower()
+                name = None
     return out
 
 
