@@ -464,6 +464,47 @@ The spread of the tuning F1 over the 12 settings is 0.30, against 0.62 for nano_
 - **The tuned setting is robust on these axes.** That setting is a 5 s window, posterior 0.99 and a 1 ms merge gap. It reaches 0.90 with 10 pA hum and 0.95 with quadratic drift, against 0.77 and 0.84 for nano_ext[dpgmm]. It is weakest at 200 events/s (0.81, recall 0.75), where events cover about 20 % of the time.
 
 
+## DPGMM ablation
+
+`dpgmm_ablation.py` removes one ingredient of Nano_ext's Dirichlet-process mixture at a time. The switch is made in the benchmark adapter (`adapters.ABLATIONS`); the package defaults and detection code are unchanged.
+
+**Variants.**
+- `-no_dp_prior`: a finite symmetric Dirichlet weight prior replaces the Dirichlet-process prior.
+- `-no_merge`: adjacent components whose mixture is unimodal are not merged.
+- `-no_thinning`: sub-level fits use every sample instead of one sample per filter correlation time.
+
+The first two affect the event threshold and the sub-level fits; the third only the sub-level fits.
+
+**Runs.** All variants use default settings on the test seeds 0–4. Every recording includes the standard 1/f noise (30 % of the noise RMS). The scenarios are the phase-1 axes plus three sub-level axes:
+- `levels`: the phase-3 axis, 1 ms per event, adjacent depths 12 pA (≈ 1.6 σ) apart;
+- `levels_close_long`: the same depths, 2 ms per level;
+- `levels_sep_long`: depths 60, 90, 30, 120 pA (≥ 30 pA, ≈ 4 σ, apart), 2 ms per level.
+
+There were 480 runs and no errors.
+
+**Sub-level count accuracy** (full / -no_dp_prior / -no_merge / -no_thinning):
+
+| scenario | 1 level | 2 levels | 3 levels | 4 levels |
+|---|---|---|---|---|
+| `levels` (1 ms per event) | 1.00 / 0.99 / 0.96 / 0.94 | 0.56 / 0.60 / 0.56 / 0.62 | 0.06 / 0.06 / 0.08 / 0.13 | 0.01 / 0.01 / 0.02 / 0.01 |
+| `levels_close_long` | 1.00 / 0.99 / 0.89 / 0.94 | 0.99 / 0.99 / 0.99 / 0.99 | 0.30 / 0.32 / 0.41 / 0.51 | 0.17 / 0.17 / 0.28 / 0.14 |
+| `levels_sep_long` | 1.00 / 0.99 / 0.89 / 0.94 | 0.99 / 0.99 / 0.99 / 0.99 | 0.74 / 0.78 / 0.76 / 0.87 | 0.45 / 0.49 / 0.50 / 0.65 |
+
+On the phase-1 dwell axis, the level accuracy of `-no_merge` falls from 1.00 to 0.90 at 10 ms and from 0.99 to 0.46 at 100 ms. The other variants stay within 0.02 of the full model.
+
+**Observations.**
+
+- **Event detection** barely depends on these ingredients: F1 is within 0.02 of the full model on every axis. The one exception is SNR 3, where `-no_merge` gets 0.21 against 0.03.
+- **Dirichlet-process prior:** replacing it with a finite Dirichlet prior changes level accuracy by at most 0.04. With pruning and merging in place, the prior type is not what decides the number of levels.
+- **Merging** matters for long events: without it, 1/f noise inside 10–100 ms events is split into spurious levels (0.46 at 100 ms). It costs a little at 3–4 levels.
+- **Thinning** limits multi-level events. Without it, accuracy rises for 3–4 well-separated 2 ms levels (0.74 → 0.87 and 0.45 → 0.65) and for 3 close levels (0.30 → 0.51). The costs:
+  - slight over-splitting of single-level events (1.00 → 0.94);
+  - 2–3.5× the run time on long events.
+- **What thinning does not fix:**
+  - **Short levels:** the `levels` axis stays at 0.13 and 0.01 for 3 and 4 levels, because levels of about 0.25–0.33 ms are close to the minimum segment length (50 samples = 200 µs).
+  - **Close levels:** 4 levels 12 pA apart stay ≤ 0.28. Their current histogram has a single mode, which a mixture over current values cannot resolve.
+- **Detection limits some separated cases.** With separated levels, the 3- and 4-level detection F1 is 0.77–0.78. The shallow 30 pA level lies above the 5σ threshold (37.5 pA), so the event is cut into parts at detection, before any sub-level fit.
+
 ## Limitations and next steps
 
 - **Not covered:** upward events; combinations of axes; per-scenario tuning on the phase-3 axes.
