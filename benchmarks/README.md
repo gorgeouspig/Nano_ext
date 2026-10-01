@@ -335,7 +335,7 @@ Observations:
 **Caveats.**
 
 - PELT does not fit 75 M samples in memory or time here, so it runs on independent 10 s chunks, and events cut by a chunk boundary are dropped. The tuned PELT run took 33 min.
-- Poriscope's sample data (DOI 10.20383/103.01599, FRDR, CC BY 4.0) is not yet included. `external/fetch_poriscope_data.py` downloads it into `_external/data/poriscope/` (never committed) and checks the files against `external/poriscope_data.sha256`; `run_realdata.py` then picks it up.
+- Poriscope's sample data (FRDR, CC BY 4.0; version 2, DOI 10.20383/103.01695) is not yet included. `external/fetch_poriscope_data.py` lists the dataset and downloads the selected files into `_external/data/poriscope/` (never committed), checking them against FRDR's checksum file and `external/poriscope_data.sha256`. The files are served from the repository's Globus HTTPS endpoint (`g-772fa5.cd4fe.0ec8.data.globus.org`), which must be reachable. The recordings are four Chimera channels (`.log` with `.json` metadata, 3.3 GB each); `run_realdata.py` still needs a reader for that format.
 
 ## Short events behind a 10 kHz filter
 
