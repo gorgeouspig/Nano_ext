@@ -31,6 +31,7 @@ python benchmarks/run_realdata.py --workers 2 # agreement between methods on pub
 | `run_phase1.py` | runs the phase-1 grid (default settings), writes `results/phase1_*` |
 | `run_phase2.py` | external tools and equal-budget tuning, writes `results/phase2_*` |
 | `run_phase3.py` | event rate, filter cutoff, drift, hum and sub-level count axes, writes `results/phase3_*` |
+| `dpgmm_ablation.py` | DPGMM ablation (one ingredient removed at a time), writes `results/dpgmm_ablation_*` |
 | `run_realdata.py` | methods on public recordings without ground truth, writes `results/realdata_*` |
 | `external/` | `setup.sh` (pinned installs of the external tools into `_external/`, untracked) and the worker scripts that run MOSAIC and Nano Trees in their own environments; `fetch_poriscope_data.py` (download and SHA256 check of the Poriscope sample data) |
 | `short_event_limit.py` | shortest detectable event behind a 10 kHz filter vs Nano_ext's minimum event duration, writes `results/short_event_limit*.csv` |
@@ -158,7 +159,7 @@ That recording is favourable: every level lasts ≥ 1 ms, the blockades are deep
 | `threshold+nanotrees` | Events from `threshold` (default k = 5); sub-levels fitted inside each event (± padding) by the NanoTrees event fitter of Poriscope (commit `9d2b9e8`, MIT). | Python ≥ 3.12.10 environment. The plugin is called as in Poriscope's own unit tests, without its GUI and event loader. Its default *Smallest Significant Sublevel* (600 pA) is far above the 36–60 pA blockades here, so by default it reports one level per event. |
 | `autonanopore` | AutoNanopore (commit `a44cb80`), unmodified; `event_detection` is called on an ABF copy of the recording. | The repository has no licence file, so it is fetched, not copied. Its command-line entry point never calls the detection. It keeps the largest excursion of each 30 ms window and accepts windows whose amplitude is an outlier among all windows, so it assumes most windows hold no event. With ~1.5 events per window here it finds no outliers and fails; this is counted as zero detections. On a sparse check recording (2 events/s) it reaches F1 0.64 with defaults. |
 
-CBED (cluster-based event detection, 2026 preprint) is not included yet. The preprint states that its machine-learning workflow is on GitHub, but the repository could not be identified from the environment used here (the preprint's full text was not reachable). Once located, the plan is to check whether that code runs event detection on its own and, if so, add it as a method on the synthetic recordings.
+| `rolling_median_2gmm` | Rolling-median baseline, then a two-component Gaussian mixture fitted to the histogram of the residual; the event threshold follows from the two clusters. Re-implementation based on the description of cluster-based event detection in Wei et al. 2026 (bioRxiv, doi 10.64898/2026.05.07.723187); not the original authors' code. | Added after the other methods; details and results in [Rolling-median baseline + two-component GMM threshold](#rolling-median-baseline--two-component-gmm-threshold). It also serves as the fixed two-component GMM baseline. |
 
 ### Tuning protocol
 
@@ -370,6 +371,45 @@ Observations:
 - At SNR 5 even 1 ms events are partly missed. There the 5σ open-pore threshold is the limit, not the minimum duration.
 - Depth is the mean over the detected event, so short events read shallower: 0.90 of the true depth at 100 µs and 0.82 at 50 µs (SNR 10, k = 0.5). This is because the rising and falling edges are included.
 - Real recordings have non-Gaussian noise (spikes, bursts), so the false-event rate on them can be higher than here.
+
+## Rolling-median baseline + two-component GMM threshold
+
+`rolling_median_2gmm` (in `adapters.py`) re-implements the description of cluster-based event detection in Wei et al. 2026 (bioRxiv, doi 10.64898/2026.05.07.723187). It is not the original authors' code. It also serves as a threshold from a mixture with the number of components fixed at two.
+
+**Steps.**
+
+1. Baseline: the median of the current over a centred window (`window_sec`, default 1 s; at the ends, the samples that are available).
+2. Residual: current minus baseline.
+3. A two-component Gaussian mixture is fitted by EM to the residual histogram (512 bins): a baseline cluster and an event cluster.
+4. Samples whose posterior probability of the event cluster is at least `posterior` (default 0.5, the Bayes decision boundary) are event samples.
+5. Post-processing: events closer than `merge_gap_sec` (default 20 µs) are merged.
+
+**Assumptions.** The description leaves several details open, so the following are choices made here:
+- the window length and the number of bins;
+- the initialisation: baseline cluster at the residual median with its MAD width, event cluster at the 1st percentile;
+- the posterior rule;
+- the post-processing values.
+
+If the event cluster's mean is not more than one baseline SD below the baseline mean, no events are reported. The method does no sub-level analysis.
+
+**Tuning.** Same budget and protocol as phase 2: 12 settings, `window_sec` ∈ {0.2, 1, 5} s × `posterior` ∈ {0.5, 0.99} × `merge_gap_sec` ∈ {20 µs, 1 ms}. The global setting chosen for F1 was 5 s, 0.99 and 1 ms. Adding the method does not change any other method's selected setting or result.
+
+**Phase-2 results (mean F1 over the 12 scenarios, 5 test seeds).**
+
+| setting | `rolling_median_2gmm` | nano_ext[dpgmm] | nano_ext[gmm] | threshold | PELT |
+|---|---|---|---|---|---|
+| default | 0.47 | 0.57 | 0.59 | 0.76 | 0.81 |
+| one tuned setting | 0.67 | 0.78 | 0.68 | 0.78 | 0.90 |
+| tuned per scenario | 0.69 | 0.84 | 0.82 | 0.85 | 0.92 |
+
+The spread of the tuning F1 over the 12 settings is 0.30, against 0.62 for nano_ext[dpgmm] and 0.64 for PELT.
+
+**Observations.**
+
+- **Short events:** this is where it is strongest. With defaults it gets F1 0.93 at 30 µs and 100 µs, close to PELT (0.94, 0.97). Nano_ext's defaults drop these events because of their minimum duration.
+- **Long events:** it fails with defaults (F1 0.25 at 10 ms, 0.02 at 100 ms). Recall stays high (0.97, 0.79), but each event is split into many pieces, because there is no hysteresis and the 20 µs merge gap is short. With the tuned setting (1 ms merge gap, 5 s window) it reaches 0.93 at 10 ms and 0.55 at 100 ms.
+- **Low SNR:** at SNR ≤ 3 it finds no usable event cluster or calls noise excursions events (F1 ≤ 0.14 even when tuned per scenario). At SNR 5 the defaults over-call (precision 0.12); the tuned posterior of 0.99 fixes this (0.93).
+- **Runtime:** about 6 s per 10–30 s recording, dominated by the rolling median. For 100 ms events (30 s recordings, 5 s window) it is 47–70 s.
 
 ## Limitations and next steps
 
