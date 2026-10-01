@@ -42,7 +42,6 @@ import fnmatch
 import hashlib
 import html
 import re
-import sys
 from pathlib import Path
 from urllib.parse import quote, urljoin, urlparse
 
