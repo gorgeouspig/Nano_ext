@@ -66,6 +66,8 @@ GRIDS = {  # 12 settings per method; None means the method's automatic default
     "threshold+nanotrees": _grid(k_sigma=[4.0, 5.0],
                                  smallest_sublevel_pa=[5.0, 10.0, 20.0, 40.0, 80.0, 600.0]),
     "autonanopore": _grid(window_size_ms=[2, 5, 10, 30], theta=[0.5, 1.0, 1.5]),
+    "rolling_median_2gmm": _grid(window_sec=[0.2, 1.0, 5.0], posterior=[0.5, 0.99],
+                                 merge_gap_sec=[20e-6, 1e-3]),
 }
 for _m, _g in GRIDS.items():
     assert len(_g) == 12, _m

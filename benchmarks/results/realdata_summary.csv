@@ -1,0 +1,33 @@
+dataset,method,setting,runtime_s,error,n_events,median_dwell_ms,median_depth_pa,duration_s
+autonanopore_demo,autonanopore,default,38.96,,80,0.108,107.4,300
+autonanopore_demo,autonanopore,tuned_global_f1,78.85,,2053,0.124,52.68,300
+autonanopore_demo,mosaic,default,501.7,,120,0.072,23.36,300
+autonanopore_demo,mosaic,tuned_global_f1,195.1,,5,0.064,64.69,300
+autonanopore_demo,nano_ext[dpgmm],default,27.82,,13,0.316,113,300
+autonanopore_demo,nano_ext[dpgmm],tuned_global_f1,28.18,,104,0.06,95.35,300
+autonanopore_demo,nano_ext[gmm],default,38.84,,430,0.308,73.98,300
+autonanopore_demo,nano_ext[gmm],tuned_global_f1,42.28,,1236,0.236,66.38,300
+autonanopore_demo,pelt,default,674.8,,2598,0.156,60.79,300
+autonanopore_demo,pelt,tuned_global_f1,1966,,1898,2.594,42.24,300
+autonanopore_demo,rolling_median_2gmm,default,144.6,,0,,,300
+autonanopore_demo,rolling_median_2gmm,tuned_global_f1,145.2,,0,,,300
+autonanopore_demo,threshold,default,18.96,,596,5.568,51.15,300
+autonanopore_demo,threshold,tuned_global_f1,14.86,,469,10,48.42,300
+autonanopore_demo,threshold+nanotrees,default,79.45,,596,5.568,51.15,300
+autonanopore_demo,threshold+nanotrees,tuned_global_f1,75.84,,596,5.568,51.26,300
+poriscope_sample,autonanopore,default,22.42,,24,0.135,2835,60
+poriscope_sample,autonanopore,tuned_global_f1,24.76,,12,0.004,284.2,60
+poriscope_sample,mosaic,default,47.42,,19,0.126,1464,60
+poriscope_sample,mosaic,tuned_global_f1,47,,16,0.127,1444,60
+poriscope_sample,nano_ext[dpgmm],default,12.71,,22,0.166,1430,60
+poriscope_sample,nano_ext[dpgmm],tuned_global_f1,12.52,,198,0.095,37.4,60
+poriscope_sample,nano_ext[gmm],default,23.05,,21,0.166,1536,60
+poriscope_sample,nano_ext[gmm],tuned_global_f1,312.9,,2.569e+04,0.272,8.417,60
+poriscope_sample,pelt,default,,"skipped: PELT time grows faster than linearly with the number of samples on this almost event-free 500 kHz trace (55 s for 0.5 s, 164 s for 1 s of signal); 10 s chunks would take hours per chunk",,,,
+poriscope_sample,pelt,tuned_global_f1,,"skipped: PELT time grows faster than linearly with the number of samples on this almost event-free 500 kHz trace (55 s for 0.5 s, 164 s for 1 s of signal); 10 s chunks would take hours per chunk",,,,
+poriscope_sample,rolling_median_2gmm,default,290.5,,30,0.117,1453,60
+poriscope_sample,rolling_median_2gmm,tuned_global_f1,407.5,,28,0.125,1454,60
+poriscope_sample,threshold,default,6.662,,44,0.047,1337,60
+poriscope_sample,threshold,tuned_global_f1,5.128,,44,0.049,1229,60
+poriscope_sample,threshold+nanotrees,default,44.73,,44,0.032,1405,60
+poriscope_sample,threshold+nanotrees,tuned_global_f1,43.04,,44,0.049,1255,60

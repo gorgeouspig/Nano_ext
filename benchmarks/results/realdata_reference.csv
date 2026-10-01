@@ -1,0 +1,15 @@
+method,setting,n_reference,n_detected,recall_any,recall_iou50,dwell_err
+autonanopore,default,15,22,1,1,0.0999
+autonanopore,tuned_global_f1,15,10,0,0,
+mosaic,default,15,17,0.8,0.733,0.114
+mosaic,tuned_global_f1,15,14,0.733,0.533,0.105
+nano_ext[dpgmm],default,15,20,0.933,0.933,0.0681
+nano_ext[dpgmm],tuned_global_f1,15,185,1,0.933,0.534
+nano_ext[gmm],default,15,19,0.933,0.933,0.0548
+nano_ext[gmm],tuned_global_f1,15,21260,1,0.6,0.842
+rolling_median_2gmm,default,15,26,1,1,0.0974
+rolling_median_2gmm,tuned_global_f1,15,24,1,0.933,0.0976
+threshold,default,15,38,1,1,0.038
+threshold,tuned_global_f1,15,38,1,1,0.0176
+threshold+nanotrees,default,15,38,1,1,0.116
+threshold+nanotrees,tuned_global_f1,15,38,1,1,0.0723

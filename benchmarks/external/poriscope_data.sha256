@@ -1,0 +1,9 @@
+# sha256  file name — Poriscope sample data, DOI 10.20383/103.01599 (FRDR, CC BY 4.0)
+# filled by: python benchmarks/external/fetch_poriscope_data.py --record
+1a712344e41001d5d1fe635643a6bde6bf0dc829d719c3df447e26b910ec8b64  frdr-dfdr-checksums.txt
+4b9d4e6e86c2dad9152e75f29d562ccbdba9db20410beac4cc9593e97eae36ee  2kbp_n200mV_HS2_20240604_122657.json
+bb527249684383fa9efda922c76842090ef0e7765ad92f14231321fef5118897  2kbp_n200mV_HS2_20240604_122657.log
+d7cf1bcc042a65a10eeab1551515f0a81494eeacbaf4e126f135ee160c02445c  CITATION.txt
+4f5ef9a7d5edcf894bdd7f7c5330b0e8107ee4350cad294ae7581e9bebd3aa35  LICENSE.txt
+e0ce9cfe9773f683ea4ecf96f2ce9c5776e923c51becd88352af411cb81b207c  README.txt
+b17affaccd1a7dadc88a7c904be9fc3ecbd62da7c8d3489887b5a5a3730e64c8  tutorial_events.sqlite3

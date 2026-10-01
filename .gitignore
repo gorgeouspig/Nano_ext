@@ -63,3 +63,5 @@ scripts/demo_video/_work/
 !benchmarks/README.md
 !benchmarks/results/*.csv
 benchmarks/_external/
+# downloaded third-party recordings (never committed)
+benchmarks/_external/data/
