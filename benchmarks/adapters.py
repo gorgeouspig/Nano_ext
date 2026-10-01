@@ -96,7 +96,7 @@ def threshold(signal, sr, k_sigma=5.0, k_exit=1.0, min_duration_sec=0.0, merge_g
 # PELT change points (ruptures)
 # ---------------------------------------------------------------------------
 
-def pelt(signal, sr, penalty_factor=1.0, k_sigma=3.0, min_size=2):
+def pelt(signal, sr, penalty_factor=1.0, k_sigma=3.0, min_size=2, chunk_sec=None):
     """PELT segmentation of the baseline-subtracted trace (L2 cost).
 
     Uses ``ruptures.KernelCPD(kernel="linear")``, the C implementation of
@@ -104,9 +104,21 @@ def pelt(signal, sr, penalty_factor=1.0, k_sigma=3.0, min_size=2):
     ``penalty_factor · 2 σ² ln n``. Segments whose mean lies more than
     ``k_sigma·σ`` below the baseline are event levels; runs of consecutive
     event segments form one event with one sub-level per segment.
+    ``chunk_sec`` segments long recordings in independent chunks.
     """
     import ruptures as rpt
 
+    if chunk_sec is not None and len(signal) > 2 * chunk_sec * sr:
+        # long recordings: segment in chunks (memory and time grow fast with n);
+        # events cut by a chunk boundary are dropped
+        n, step, out = len(signal), int(chunk_sec * sr), []
+        for a in range(0, n, step):
+            b = min(n, a + step)
+            for e in pelt(signal[a:b], sr, penalty_factor, k_sigma, min_size):
+                if e["start"] > 0 and e["end"] < (b - a) / sr:
+                    out.append({**e, "start": e["start"] + a / sr, "end": e["end"] + a / sr,
+                                "level_bounds": [t + a / sr for t in e["level_bounds"]]})
+        return out
     x = np.asarray(signal, dtype=np.float64)
     base = robust_baseline(x, sr)
     r = x - base

@@ -12,7 +12,7 @@ for detection in phase 2. The trace is converted to pA and its sign chosen so
 that the open pore is positive and blockades point down. Outputs:
 
 * ``results/realdata_summary.csv`` – events, median dwell time and depth per
-  method and setting
+  method and setting (PELT runs in 10 s chunks here)
 * ``results/realdata_agreement.csv`` – pairwise agreement: F1 of one method's
   events against another's (IoU ≥ 0.5 and any overlap; symmetric)
 
@@ -84,22 +84,29 @@ def load_pA(path: Path):
 
 def run_job(args):
     dataset, path, method, setting, params = args
+    out = DATA / "events" / dataset
+    done = out / f"{method}__{setting}.summary.json"
+    if done.exists():
+        return json.loads(done.read_text())
     signal, sr = load_pA(path)
     fn, defaults = METHODS[method]
+    if method == "pelt":
+        params = {**(params or {}), "chunk_sec": 10.0}  # 75 M samples do not fit in one PELT run
     t0 = time.perf_counter()
     try:
         events, err = fn(signal, sr, **{**defaults, **_clean(params or {})}), ""
     except Exception as exc:
         events, err = [], f"{type(exc).__name__}: {exc}"[:300]
     dt = time.perf_counter() - t0
-    out = DATA / "events" / dataset
     out.mkdir(parents=True, exist_ok=True)
     (out / f"{method}__{setting}.json").write_text(json.dumps(events))
-    return {"dataset": dataset, "method": method, "setting": setting, "runtime_s": dt, "error": err,
+    row = {"dataset": dataset, "method": method, "setting": setting, "runtime_s": dt, "error": err,
             "n_events": len(events),
             "median_dwell_ms": float(np.median([1e3 * (e["end"] - e["start"]) for e in events])) if events else np.nan,
             "median_depth_pa": float(np.median([e["depth"] for e in events])) if events else np.nan,
             "duration_s": len(signal) / sr}
+    done.write_text(json.dumps(row))
+    return row
 
 
 def agreement(dataset: str, keys: list[tuple[str, str]]) -> pd.DataFrame:
