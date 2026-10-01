@@ -6,8 +6,11 @@ Datasets (never committed; fetched or unpacked into ``_external/data/``):
   (``1.abf.zip`` in its repository, see ``external/setup.sh``).
 * ``poriscope_sample`` – Poriscope's sample data (FRDR, DOI 10.20383/103.01695,
   CC BY 4.0), fetched into ``_external/data/poriscope/`` by
-  ``external/fetch_poriscope_data.py``. Its recordings are Chimera ``.log``
-  files, which this script cannot read yet (only ``*.abf`` is picked up).
+  ``external/fetch_poriscope_data.py``. Its recordings are Chimera VC400
+  ``.log`` files (raw int16, scaled with the companion ``.json`` as in
+  Poriscope's ``ChimeraReader20240501``). The first ``--max-sec`` seconds of
+  the first channel found are used, decimated (FIR, zero phase) to at most
+  500 kHz.
 
 Every method runs with its default setting and with the single setting tuned
 for detection in phase 2. The trace is converted to pA and its sign chosen so
@@ -66,22 +69,49 @@ def prepare(name: str) -> Path | None:
                 abf.write_bytes(z.read(member))
         return abf
     if name == "poriscope_sample":
-        files = sorted((DATA / "poriscope").glob("*.abf")) if (DATA / "poriscope").exists() else []
+        d = DATA / "poriscope"
+        files = sorted(p for p in d.glob("*.log") if p.with_suffix(".json").exists()) if d.exists() else []
+        files = [p for p in files if p.stat().st_size > 10 * 2**20] or files  # skip near-empty channels
         return files[0] if files else None
     raise ValueError(name)
 
 
-def load_pA(path: Path):
-    """Signal in pA, sign flipped if needed so the open pore is positive."""
-    import pyabf
+MAX_SEC = 60.0  # Chimera recordings are cropped to this length
+MAX_RATE = 500e3  # and decimated to at most this sampling rate
 
-    abf = pyabf.ABF(str(path))
-    y = np.asarray(abf.sweepY, dtype=np.float64)
-    unit = (abf.adcUnits[0] if abf.adcUnits else "pA").strip()
-    y *= {"nA": 1e3, "pA": 1.0, "uA": 1e6, "µA": 1e6}.get(unit, 1.0)
+
+def _load_chimera(path: Path, max_sec: float):
+    """Chimera VC400 ``.log`` (2024-05 format: no header, int16, ``.json`` settings)."""
+    from scipy.signal import decimate
+
+    cfg = json.loads(path.with_suffix(".json").read_text())
+    g, ch = cfg["global"], cfg["channel"]
+    sr = float(g["f_sampling"])
+    scale = 1e12 * ((2 * 2 * 2.048 / 2**16) / g["filter_gain"]) / ch["tia_gain"]
+    raw = np.memmap(path, dtype=np.int16, mode="r")[: int(max_sec * sr)]
+    y = raw.astype(np.float64) * scale - ch["i_offset"] * 1e12
+    q = int(np.ceil(sr / MAX_RATE))
+    if q > 1:
+        y = decimate(y, q, ftype="fir", zero_phase=True)
+        sr /= q
+    return y, sr
+
+
+def load_pA(path: Path, max_sec: float = MAX_SEC):
+    """Signal in pA, sign flipped if needed so the open pore is positive."""
+    if path.suffix.lower() == ".log":
+        y, sr = _load_chimera(path, max_sec)
+    else:
+        import pyabf
+
+        abf = pyabf.ABF(str(path))
+        y = np.asarray(abf.sweepY, dtype=np.float64)
+        unit = (abf.adcUnits[0] if abf.adcUnits else "pA").strip()
+        y *= {"nA": 1e3, "pA": 1.0, "uA": 1e6, "µA": 1e6}.get(unit, 1.0)
+        sr = float(abf.dataRate)
     if np.median(y) < 0:
         y = -y
-    return y.astype(np.float32), float(abf.dataRate)
+    return y.astype(np.float32), sr
 
 
 def run_job(args):
