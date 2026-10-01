@@ -13,6 +13,8 @@ python benchmarks/run_phase1.py --workers 4   # SNR / dwell-time grid, ~40 min o
 python benchmarks/run_phase1.py --quick       # smaller grid, 2 seeds
 bash benchmarks/external/setup.sh             # external tools (git + uv needed)
 python benchmarks/run_phase2.py --workers 4   # external tools + equal-budget tuning, several hours
+python benchmarks/run_phase3.py --workers 4   # more scenario axes, default + phase-2 settings
+python benchmarks/run_realdata.py --workers 2 # agreement between methods on public recordings
 ```
 
 `run_phase1.py --resume` keeps finished recordings in
@@ -28,6 +30,8 @@ python benchmarks/run_phase2.py --workers 4   # external tools + equal-budget tu
 | `common.py` | event matching, metrics, shared baseline estimate of the reference methods |
 | `run_phase1.py` | runs the phase-1 grid (default settings), writes `results/phase1_*` |
 | `run_phase2.py` | external tools and equal-budget tuning, writes `results/phase2_*` |
+| `run_phase3.py` | event rate, filter cutoff, drift, hum and sub-level count axes, writes `results/phase3_*` |
+| `run_realdata.py` | methods on public recordings without ground truth, writes `results/realdata_*` |
 | `external/` | `setup.sh` (pinned installs of the external tools into `_external/`, untracked) and the worker scripts that run MOSAIC and Nano Trees in their own environments |
 | `sublevel_count_repro.py` | reproduces the sub-level figure quoted in the main README |
 | `results/` | phase 1: `phase1_runs.csv` (every run), `phase1_summary.csv` (mean and SD over seeds), `phase1_resources.csv`, `phase1.png`; phase 2: `phase2_tuning.csv`, `phase2_selected.csv`, `phase2_sensitivity.csv`, `phase2_test.csv`, `phase2_summary.csv`, `phase2.png` |
@@ -247,9 +251,94 @@ Median run time per test recording with the global setting: threshold 0.07 s, Au
   - The last is low only because its detection varies just k = 4–5.
   - No method is insensitive to its parameters on this data, and the ranges also reflect how wide each grid is. Nano_ext's are widest for 10–30 µs events and at SNR 3–5, where the minimum event duration and the filter cutoff decide what is detected.
 
+## Phase 3: more scenario axes and real recordings
+
+### Scenario axes
+
+Each axis varies one property around the phase-1 centre (SNR 8, mean dwell 1 ms, 50 events/s, 30 kHz). Every method runs with its default setting and with the single settings chosen in phase 2 (not re-tuned), 5 seeds each:
+
+| axis | values |
+|---|---|
+| events per second | 1, 3, 10, 50, 200 (recordings of 4–60 s) |
+| amplifier low-pass | 10, 30, 100 kHz (noise RMS kept at SNR 8) |
+| drift | none; linear 5 pA/s; quadratic wander peaking at +20 pA after 2 s |
+| mains hum | 0, 3, 10 pA at 50 Hz, plus harmonics at amplitude/k (k = 2, 3) |
+| sub-levels per event | 1, 2, 3, 4 (depths 60, 36, 48, 24 pA in that order) |
+
+![phase 3](results/phase3.png)
+
+F1 with default settings / with one tuned setting (`phase3_summary.csv` has all metrics):
+
+| scenario | nano_ext[dpgmm] | nano_ext[gmm] | threshold | pelt | mosaic | threshold+nanotrees | autonanopore |
+|---|---|---|---|---|---|---|---|
+| 1 event/s | 1.00 / 0.98 | 0.44 / 0.82 | 0.91 / 0.91 | 0.51 / 0.95 | 0.38 / 0.84 | 0.91 / 0.91 | 0.83 / 0.00 |
+| 10 events/s | 1.00 / 1.00 | 1.00 / 0.77 | 0.99 / 0.99 | 0.89 / 1.00 | 0.26 / 0.82 | 0.99 / 0.99 | 0.72 / 0.54 |
+| 200 events/s | 1.00 / 1.00 | 1.00 / 0.95 | 1.00 / 1.00 | 1.00 / 1.00 | 0.25 / 0.82 | 1.00 / 1.00 | 0.00 / 0.00 |
+| low-pass 10 kHz | 0.88 / 1.00 | 1.00 / 0.83 | 1.00 / 1.00 | 0.96 / 0.87 | 0.49 / 0.91 | 1.00 / 1.00 | 0.00 / 0.81 |
+| low-pass 100 kHz | 1.00 / 1.00 | 0.95 / 0.98 | 1.00 / 1.00 | 1.00 / 1.00 | 0.13 / 0.79 | 1.00 / 1.00 | 0.00 / 0.75 |
+| linear drift | 0.93 / 1.00 | 1.00 / 1.00 | 1.00 / 1.00 | 0.98 / 1.00 | 0.05 / 0.64 | 1.00 / 1.00 | 0.00 / 0.77 |
+| quadratic drift | 0.80 / 0.84 | 0.76 / 0.77 | 1.00 / 1.00 | 0.99 / 1.00 | 0.03 / 0.65 | 1.00 / 1.00 | 0.00 / 0.77 |
+| hum 10 pA | 0.66 / 0.77 | 0.87 / 0.77 | 0.99 / 0.96 | 0.93 / 0.99 | 0.01 / 0.52 | 0.99 / 0.99 | 0.00 / 0.77 |
+| 4 sub-levels | 0.97 / 1.00 | 0.97 / 1.00 | 0.97 / 0.99 | 0.98 / 1.00 | 0.00 / 0.27 | 0.97 / 0.97 | 0.00 / 0.81 |
+
+Sub-levels, F1 × sub-level count accuracy with the setting tuned for levels:
+
+| sub-levels per event | nano_ext[dpgmm] | nano_ext[gmm] | pelt | mosaic | threshold+nanotrees |
+|---|---|---|---|---|---|
+| 1 | 1.00 | 0.23 | 0.99 | 0.99 | 1.00 |
+| 2 | 0.55 | 0.59 | 0.99 | 0.37 | 0.90 |
+| 3 | 0.06 | 0.19 | 0.65 | 0.00 | 0.00 |
+| 4 | 0.01 | 0.01 | 0.49 | 0.00 | 0.00 |
+
+Observations:
+
+- **Event density.** Nano_ext's Dirichlet-process threshold is unaffected by event density (F1 1.00 at 1–200 events/s with defaults).
+  - PELT's and Nano_ext gmm's defaults lose precision in sparse recordings, falling to 0.35–0.42. Long open-pore stretches with 1/f wander produce false events, while recall stays 1.00.
+  - AutoNanopore works as designed on sparse recordings (0.83 at 1–3 events/s with defaults) and fails on dense ones. A setting tuned for dense data does not transfer to sparse data.
+- **Drift and hum are Nano_ext's weak points here.**
+  - With a quadratic baseline wander (+20 pA), dpgmm reaches only F1 0.80–0.84, and with 10 pA of 50 Hz hum only 0.66–0.77. The threshold, PELT and threshold + Nano Trees stay at ≥ 0.93; their shared baseline is a 2 s running percentile.
+  - Both are candidates for improving Nano_ext's baseline and noise estimation. As stated above, no detection code was changed for the benchmark.
+- **Filter cutoff.** Results barely depend on the amplifier bandwidth at a fixed SNR. The exception is Nano_ext dpgmm's defaults at 10 kHz (0.88; 1.00 when tuned).
+- **Sub-level count.** Counting 3–4 sub-levels in ~1 ms events (each level 0.2–0.5 ms) is hard for every method. PELT is best (0.65 and 0.49).
+  - Nano_ext's Dirichlet-process sub-levels almost never find 3–4 levels (0.06 and 0.01), and neither do MOSAIC and Nano Trees.
+  - Together with phase 2, Nano_ext's level counting is reliable for long, well-separated levels but not for many short ones.
+
+### Real recording (no ground truth)
+
+`run_realdata.py` runs every method (default and tuned setting) on the 300 s, 250 kHz recording shipped with AutoNanopore.
+
+**Recording.** The current is converted to pA with the open pore positive. Its properties:
+
+- open-pore noise ≈ 18 pA (median absolute deviation, MAD) but a raw standard deviation of 45 pA, i.e. heavy-tailed;
+- baseline drift ≈ 380 pA over 300 s;
+- the events AutoNanopore reports last ≈ 110 µs and peak at ≈ 107 pA.
+
+**Check of the adapter.** With default settings, the AutoNanopore adapter reproduces the event list published in its repository exactly (80/80 events).
+
+**Event counts:**
+
+| method | default | one tuned setting |
+|---|---|---|
+| nano_ext[dpgmm] | 13 | 104 |
+| nano_ext[gmm] | 430 | 1236 |
+| threshold | 596 | 469 |
+| pelt (10 s chunks) | 2598 | 1898 |
+| mosaic | 120 | 5 |
+| threshold+nanotrees | 596 | 596 |
+| autonanopore | 80 | 2053 |
+
+**Agreement.** Between methods with default settings, the pairwise F1 at IoU ≥ 0.5 is ≤ 0.11, and ≤ 0.29 even counting any overlap. The exception is the two variants that share the threshold detector (`realdata_agreement.csv`).
+
+**Interpretation.** The methods disagree on which events exist at all. This recording lies in the regime where the synthetic benchmark shows the largest differences between methods: short events, SNR of a few, drifting baseline. Without ground truth the counts cannot be ranked. This is the case for evaluating on synthetic data with known answers.
+
+**Caveats.**
+
+- PELT does not fit 75 M samples in memory or time here, so it runs on independent 10 s chunks, and events cut by a chunk boundary are dropped. The tuned PELT run took 33 min.
+- Poriscope's sample data (DOI 10.20383/103.01599) could not be downloaded in the environment used for these runs. `run_realdata.py` picks it up from `_external/data/poriscope/` when it is placed there.
+
 ## Limitations and next steps
 
-- **Scenario axes not yet varied:** filter cutoff, drift, hum, event density (AutoNanopore in particular is designed for sparse events), number of sub-levels (1–4) and upward events.
+- **Not covered:** upward events; combinations of axes; per-scenario tuning on the phase-3 axes.
 - **Shared baseline:** the reference detectors (threshold, PELT) share one simple baseline estimate. The external tools and Nano_ext use their own.
 - **Real recordings:** agreement between methods on public recordings, where there is no ground truth, is planned.
 
