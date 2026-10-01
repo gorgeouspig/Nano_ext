@@ -328,6 +328,9 @@ Observations:
 | mosaic | 120 | 5 |
 | threshold+nanotrees | 596 | 596 |
 | autonanopore | 80 | 2053 |
+| rolling_median_2gmm | 0 | 0 |
+
+`rolling_median_2gmm` finds no separate event cluster in this recording's residual histogram: the events are rare, short and shallow, and the noise is heavy-tailed.
 
 **Agreement.** Between methods with default settings, the pairwise F1 at IoU ≥ 0.5 is ≤ 0.11, and ≤ 0.29 even counting any overlap. The exception is the two variants that share the threshold detector (`realdata_agreement.csv`).
 
@@ -336,7 +339,43 @@ Observations:
 **Caveats.**
 
 - PELT does not fit 75 M samples in memory or time here, so it runs on independent 10 s chunks, and events cut by a chunk boundary are dropped. The tuned PELT run took 33 min.
-- Poriscope's sample data (FRDR, CC BY 4.0; version 2, DOI 10.20383/103.01695) is not yet included. `external/fetch_poriscope_data.py` lists the dataset and downloads the selected files into `_external/data/poriscope/` (never committed), checking them against FRDR's checksum file and `external/poriscope_data.sha256`. The files are served from the repository's Globus HTTPS endpoint (`g-772fa5.cd4fe.0ec8.data.globus.org`), which must be reachable. The recordings are four Chimera channels (`.log` with `.json` metadata, 3.3 GB each); `run_realdata.py` still needs a reader for that format.
+
+### Second real recording: Poriscope sample data
+
+**Data.** Poriscope's sample data (FRDR, version 2, DOI 10.20383/103.01695, CC BY 4.0; González González, Kerrouri, Wadhwa, Tabard-Cossa, Briggs 2026):
+- 2 kbp dsDNA through a 4.9 nm SiNx pore (10 nm membrane) in 3.6 M LiCl at −200 mV;
+- Chimera VC400 at 5 MHz, 330 s per channel; channels 1, 3 and 4 hold identical data and channel 2 is empty (dataset README).
+
+**Handling.**
+- `external/fetch_poriscope_data.py` downloads one channel and the text files; all match FRDR's SHA256 list. Nothing is committed.
+- `run_realdata.py` reads the first 60 s, converts it to pA as Poriscope's `ChimeraReader20240501` does, and decimates it (FIR, zero phase) to 500 kHz. Poriscope's own tutorial analysis also used 500 kHz, after a 100 kHz Bessel filter.
+
+**Recording.**
+- The open-pore current is about 4.33 nA.
+- The events block 1.3–2.7 nA, last 80–270 µs and are sparse (about 0.3 per s).
+- The SNR is high: the noise SD is 132 pA at 5 MHz.
+
+**Partial reference.** The dataset's `tutorial_events.sqlite3` lists 15 visually reviewed events in channel 3 over 0–50 s. Their stored raw windows match the downloaded data sample for sample. They were found with a 2000 pA threshold, so shallower events are not in the list, and only recall can be measured against it (`realdata_reference.csv`).
+
+| method | events in 60 s, default / tuned | events in 0–50 s, default | recall of the 15 reviewed events (any overlap / IoU ≥ 0.5), default |
+|---|---|---|---|
+| nano_ext[dpgmm] | 22 / 198 | 20 | 0.93 / 0.93 |
+| nano_ext[gmm] | 21 / 25,692 | 19 | 0.93 / 0.93 |
+| threshold | 44 / 44 | 38 | 1.00 / 1.00 |
+| threshold+nanotrees | 44 / 44 | 38 | 1.00 / 1.00 |
+| mosaic | 19 / 16 | 17 | 0.80 / 0.73 |
+| autonanopore | 24 / 12 | 22 | 1.00 / 1.00 |
+| rolling_median_2gmm | 30 / 28 | 26 | 1.00 / 1.00 |
+| pelt | skipped | — | — |
+
+**Observations.**
+
+- **Defaults agree.** With default settings the methods largely agree on this clean, sparse recording: pairwise F1 is 0.54–1.00, and ≥ 0.60 counting any overlap. This is unlike the AutoNanopore recording (≤ 0.11).
+- **Nano_ext misses the shortest event.** Both Nano_ext variants miss the shortest reviewed event (79 µs). With the default filter (sampling rate / 10 = 50 kHz), their minimum event duration is 5 / 50 kHz = 100 µs. This is the limit described in [Short events behind a 10 kHz filter](#short-events-behind-a-10-khz-filter).
+- **MOSAIC** misses 3 of the 15 reviewed events (79, 115 and 179 µs).
+- **The single tuned settings from phase 2 do not transfer.** Nano_ext gmm reports 25,692 events, Nano_ext dpgmm 198, and AutoNanopore's tuned setting finds none of the reviewed events. Those settings were chosen on 250 kHz synthetic recordings with blockades of a few tens of pA.
+- **The extra events are unclassified.** The methods that report more events than the reference (threshold: 38 in 0–50 s) also find shallower blockades, which the 2000 pA reference threshold excluded. Whether those are translocations cannot be decided here.
+- **PELT was not run.** Its run time grows faster than linearly with the number of samples on this almost event-free trace: 55 s for 0.5 s of signal and 164 s for 1 s. 10 s chunks would take hours each, so it is skipped and the reason is recorded in `realdata_summary.csv`.
 
 ## Short events behind a 10 kHz filter
 
@@ -415,5 +454,5 @@ The spread of the tuning F1 over the 12 settings is 0.30, against 0.62 for nano_
 
 - **Not covered:** upward events; combinations of axes; per-scenario tuning on the phase-3 axes.
 - **Shared baseline:** the reference detectors (threshold, PELT) share one simple baseline estimate. The external tools and Nano_ext use their own.
-- **Real recordings:** agreement between methods on public recordings, where there is no ground truth, is planned.
+- **Real recordings:** two public recordings without full ground truth (AutoNanopore demo, Poriscope sample with 15 reviewed events); more labelled real data would make the comparison stronger.
 
