@@ -129,12 +129,25 @@ def load_pA(path: Path, max_sec: float = MAX_SEC):
     return y.astype(np.float32), sr
 
 
+# (dataset, method): reason. Runs expected to take many hours are not attempted.
+SKIP = {
+    ("poriscope_sample", "pelt"): (
+        "skipped: PELT time grows faster than linearly with the number of samples on this "
+        "almost event-free 500 kHz trace (55 s for 0.5 s, 164 s for 1 s of signal); 10 s chunks "
+        "would take hours per chunk"),
+}
+
+
 def run_job(args):
     dataset, path, method, setting, params = args
     out = DATA / "events" / dataset
     done = out / f"{method}__{setting}.summary.json"
     if done.exists():
         return json.loads(done.read_text())
+    if (dataset, method) in SKIP:
+        return {"dataset": dataset, "method": method, "setting": setting, "runtime_s": np.nan,
+                "error": SKIP[(dataset, method)], "n_events": np.nan, "median_dwell_ms": np.nan,
+                "median_depth_pa": np.nan, "duration_s": np.nan}
     signal, sr = load_pA(path)
     fn, defaults = METHODS[method]
     if method == "pelt":
